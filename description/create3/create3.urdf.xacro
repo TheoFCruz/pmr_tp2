@@ -1,0 +1,74 @@
+<?xml version="1.0" ?>
+<robot name="create3" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <xacro:arg name="gazebo" default="ignition" />
+  <xacro:arg name="robot_name" default="create3" />
+  <xacro:arg name="namespace" default="" />
+
+  <xacro:include filename="$(find pmr_tp2)/description/create3/create3_base.urdf.xacro"/>
+
+  <!-- lidar addition -->
+  <link name="lidar_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.035" length="0.04"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.0 0.0 0.0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.035" length="0.04"/>
+      </geometry>
+    </collision>
+    <xacro:inertial_dummy/>
+  </link>
+
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="0.0 0.0 0.1" rpy="0 0 0"/> 
+  </joint>
+
+  <gazebo reference="lidar_joint">
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+
+  <gazebo reference="lidar_link">
+    <sensor name="gpu_lidar" type="gpu_lidar">
+      <update_rate>10.0</update_rate>
+      <visualize>true</visualize>
+      <always_on>true</always_on>
+      <topic>$(arg namespace)/scan</topic>
+      <gz_frame_id>${'lidar_link' if '$(arg namespace)' == '' else '$(arg namespace)/lidar_link'}</gz_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>150</samples>
+            <resolution>1.0</resolution>
+            <min_angle>-3.1415</min_angle>
+            <max_angle>3.1415</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.12</min>
+          <max>1.0</max>
+          <resolution>0.01</resolution>
+        </range>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+  <!-- ground truth odometry -->
+  <gazebo>
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+      <odom_topic>$(arg namespace)/odom</odom_topic>
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>$(arg namespace)/base_link</robot_base_frame>
+      <tf_topic>/tf</tf_topic> 
+    </plugin>
+  </gazebo>
+</robot>
