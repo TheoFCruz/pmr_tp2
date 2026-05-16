@@ -1,18 +1,20 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <nav_msgs/msg/odometry.hpp>
+#include <nav_msgs/msg/occupancy_grid.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <geometry_msgs/msg/point.hpp>
-#include <std_msgs/msg/bool.hpp>
 
 #include "pmr_tp2/visualizer.hpp"
 
 #include <eigen3/Eigen/Dense>
 
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 class AStar : public rclcpp::Node
@@ -25,6 +27,19 @@ public:
       "/odom",
       10,
       std::bind(&AStar::odomCallback, this, std::placeholders::_1)
+    );
+
+    goal_sub  = this->create_subscription<geometry_msgs::msg::Point>(
+      "/goal",
+      10,
+      std::bind(&AStar::goalCallback, this, std::placeholders::_1)
+    );
+
+    auto map_qos = rclcpp::QoS(1).transient_local().reliable();
+    map_sub = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
+      "/map",
+      map_qos,
+      std::bind(&AStar::mapCallback, this, std::placeholders::_1)
     );
 
     cmd_vel_pub = this->create_publisher<geometry_msgs::msg::Twist>(
@@ -62,8 +77,69 @@ private:
     robot_yaw = std::atan2(siny_cosp, cosy_cosp);
   }
 
+  void mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
+  {
+    const int received_width = msg->info.width;
+    const int received_height = msg->info.height;
+
+    if (received_width <= 0 || received_height <= 0)
+    {
+      RCLCPP_WARN(this->get_logger(), "Received an empty occupancy grid.");
+      return;
+    }
+
+    const size_t expected_size = received_width * received_height;
+
+    if (msg->data.size() != expected_size)
+    {
+      RCLCPP_WARN(
+        this->get_logger(),
+        "Occupancy grid data size (%zu) does not match width * height (%zu).",
+        msg->data.size(),
+        expected_size
+      );
+      return;
+    }
+
+    map_width = received_width;
+    map_height = received_height;
+    map_resolution = msg->info.resolution;
+    map_origin_x = msg->info.origin.position.x;
+    map_origin_y = msg->info.origin.position.y;
+    map_frame_id = msg->header.frame_id;
+
+    occupancy_grid.resize(expected_size);
+    for (std::size_t i = 0; i < expected_size; ++i)
+    {
+      occupancy_grid[i] = (msg->data[i] == 0) ? FREE_CELL : BLOCKED_CELL;
+    }
+
+    has_map = true;
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Loaded occupancy grid: %dx%d, resolution %.3f m/cell.",
+      map_width,
+      map_height,
+      map_resolution
+    );
+  }
+
+  void goalCallback(geometry_msgs::msg::Point::SharedPtr msg)
+  {
+    RCLCPP_INFO(this->get_logger(), "Received goal: (%.2lf, %.2lf)", msg->x, msg->y);
+    goal = Eigen::Vector2d(msg->x, msg->y);
+    visualizer.publishPoint("goal_marker", goal, "map", 0, 0.0, 1.0, 0.0);
+    received_goal = true;
+  }
+
+  // --------------------- Control Loop -----------------------
+  
   void controlLoop()
   {
+    if (!has_map) return;
+    if (!received_goal) return;
+
     // TODO: implement control loop
   }
 
@@ -88,20 +164,35 @@ private:
 
   // --------------------- Variables --------------------------
 
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr     odom_sub;
-  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr      cmd_vel_pub;
-  rclcpp::TimerBase::SharedPtr                                 control_timer;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr      odom_sub;
+  rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr    goal_sub;
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr       cmd_vel_pub;
+  rclcpp::TimerBase::SharedPtr                                  control_timer;
 
-  Visualizer                                                   visualizer;
+  Visualizer visualizer;
 
   // robot and goal
   Eigen::Vector2d goal;
   Eigen::Vector2d robot_pos;
   double          robot_yaw;
+  bool            received_goal;
+
+  // map
+  std::vector<uint8_t> occupancy_grid;
+  std::string          map_frame_id;
+  int                  map_width = 0;
+  int                  map_height = 0;
+  double               map_resolution = 0.0;
+  double               map_origin_x = 0.0;
+  double               map_origin_y = 0.0;
+  bool                 has_map = false;
 
   // consts
-  const double D = 0.1;
-  const LOOP_DT_MS = 100;
+  const unsigned LOOP_DT_MS = 100;
+  const double   D = 0.1;
+  const uint8_t  FREE_CELL = 0;
+  const uint8_t  BLOCKED_CELL = 1;
 };
 
 int main(int argc, char ** argv)
@@ -111,4 +202,3 @@ int main(int argc, char ** argv)
   rclcpp::shutdown();
   return 0;
 }
-
