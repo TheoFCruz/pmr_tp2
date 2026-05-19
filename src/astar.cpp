@@ -168,16 +168,15 @@ private:
 
   // --------------------- Astar Core ------------------------
 
-  struct Cell
+  struct CellEntry
   {
-    int x;
-    int y;
+    int index;
     double cost = -1.0;
   };
 
-  struct CompareCell
+  struct CompareCellEntry
   {
-    bool operator()(const Cell &a, const Cell &b)
+    bool operator()(const CellEntry &a, const CellEntry &b)
     {
       if (a.cost < 0.0 || b.cost < 0.0)
       {
@@ -188,61 +187,54 @@ private:
     }
   };
 
-  Cell worldToGrid(const Eigen::Vector2d &point)
+  bool isInsideMap(int x, int y)
   {
-    Cell cell;
-    cell.x = std::floor((point.x() - map_origin_x) / map_resolution);
-    cell.y = std::floor((point.y() - map_origin_y) / map_resolution);
-
-    return cell;
+    return x >= 0 && x < map_width &&
+      y >= 0 && y < map_height;
   }
 
-  Eigen::Vector2d gridToWorld(const Cell &cell)
+  int worldToIndex(const Eigen::Vector2d &point)
   {
-    const double x = map_origin_x + (cell.x + 0.5) * map_resolution;
-    const double y = map_origin_y + (cell.y + 0.5) * map_resolution;
+    const int x = std::floor((point.x() - map_origin_x) / map_resolution);
+    const int y = std::floor((point.y() - map_origin_y) / map_resolution);
+
+    if (!isInsideMap(x, y))
+    {
+      return -1;
+    }
+
+    return y * map_width + x;
+  }
+
+  Eigen::Vector2d indexToWorld(int index)
+  {
+    const double x = map_origin_x + (index % map_width + 0.5) * map_resolution;
+    const double y = map_origin_y + (index / map_width + 0.5) * map_resolution;
 
     return Eigen::Vector2d(x, y);
   }
 
-  int cellToIndex(const Cell &cell)
+  bool isFreeCell(int index)
   {
-    return cell.y * map_width + cell.x;
+    return index >= 0 &&
+      index < static_cast<int>(occupancy_grid.size()) &&
+      occupancy_grid[index] == FREE_CELL;
   }
 
-  Cell indexToCell(int index)
+  std::vector<int> getNeighbours(int index)
   {
-    Cell cell;
-    cell.x = index % map_width;
-    cell.y = index / map_width;
+    std::vector<int> neighbours;
+    const int x = index % map_width;
+    const int y = index / map_width;
 
-    return cell;
-  }
-
-  bool isInsideMap(const Cell &cell)
-  {
-    return cell.x >= 0 && cell.x < map_width &&
-      cell.y >= 0 && cell.y < map_height;
-  }
-
-  bool isFreeCell(const Cell &cell)
-  {
-    return isInsideMap(cell) &&
-      occupancy_grid[cellToIndex(cell)] == FREE_CELL;
-  }
-
-  std::vector<Cell> getNeighbours(const Cell &cell)
-  {
-    std::vector<Cell> neighbours;
-
-    const std::vector<Cell> candidates = {
-      {cell.x + 1, cell.y},
-      {cell.x - 1, cell.y},
-      {cell.x, cell.y + 1},
-      {cell.x, cell.y - 1}
+    const std::vector<int> candidates = {
+      isInsideMap(x + 1, y) ? y * map_width + x + 1 : -1,
+      isInsideMap(x - 1, y) ? y * map_width + x - 1 : -1,
+      isInsideMap(x, y + 1) ? (y + 1) * map_width + x : -1,
+      isInsideMap(x, y - 1) ? (y - 1) * map_width + x : -1
     };
 
-    for (const Cell &candidate : candidates)
+    for (int candidate : candidates)
     {
       if (isFreeCell(candidate))
       {
@@ -253,15 +245,14 @@ private:
     return neighbours;
   }
 
-  double calculateTotalCost(
-    const Cell &cell,
-    const Cell &end,
-    double distance_from_start)
+  double calculateHeuristic(int index, int end_index)
   {
-    const double heuristic =
-      std::abs(cell.x - end.x) + std::abs(cell.y - end.y);
+    const int x = index % map_width;
+    const int y = index / map_width;
+    const int end_x = end_index % map_width;
+    const int end_y = end_index / map_width;
 
-    return distance_from_start + heuristic;
+    return std::abs(x - end_x) + std::abs(y - end_y);
   }
 
   std::vector<Eigen::Vector2d> buildPath(
@@ -294,7 +285,7 @@ private:
 
     for (int index : path_indices)
     {
-      path_points.push_back(gridToWorld(indexToCell(index)));
+      path_points.push_back(indexToWorld(index));
     }
 
     return path_points;
@@ -304,8 +295,6 @@ private:
     const Eigen::Vector2d &start,
     const Eigen::Vector2d &end)
   {
-    // TODO: implement A*.
-    
     // create priority queue O and vector C
     //    priority = distance + heuristic
     // add start to O
@@ -316,64 +305,57 @@ private:
     //    if u not in C:
     //      add u to C
     //      add all neighbours from u with better new costs to O
-    Cell start_cell = worldToGrid(start);
-    Cell end_cell = worldToGrid(end);
+    const int start_index = worldToIndex(start);
+    const int end_index = worldToIndex(end);
 
-    if (!isFreeCell(start_cell) || !isFreeCell(end_cell))
+    if (!isFreeCell(start_index) || !isFreeCell(end_index))
     {
       RCLCPP_WARN(this->get_logger(), "A* start or goal cell is not free.");
       return {};
     }
 
     const int map_size = map_width * map_height;
-    const int start_index = cellToIndex(start_cell);
-    const int end_index = cellToIndex(end_cell);
 
-    std::priority_queue<Cell, std::vector<Cell>, CompareCell> open;
+    std::priority_queue< CellEntry, std::vector<CellEntry>, CompareCellEntry> open;
     std::vector<uint8_t> closed(map_size, 0);
-    std::vector<double> g_best(
-      map_size,
-      std::numeric_limits<double>::infinity()
-    );
+    std::vector<double> g_best(map_size, std::numeric_limits<double>::infinity());
     std::vector<int> came_from(map_size, -1);
 
     g_best[start_index] = 0.0;
-    start_cell.cost = calculateTotalCost(start_cell, end_cell, 0.0);
-    open.push(start_cell);
+    open.push({start_index, calculateHeuristic(start_index, end_index)});
 
     while (!open.empty())
     {
-      const Cell current = open.top();
+      const CellEntry current = open.top();
       open.pop();
 
-      const int current_index = cellToIndex(current);
-      if (closed[current_index])
+      if (closed[current.index])
       {
         continue;
       }
 
-      if (current_index == end_index)
+      if (current.index == end_index)
       {
         return buildPath(came_from, start_index, end_index);
       }
 
-      closed[current_index] = 1;
+      closed[current.index] = 1;
 
-      for (Cell neighbour : getNeighbours(current))
+      for (int neighbour_index : getNeighbours(current.index))
       {
-        const int neighbour_index = cellToIndex(neighbour);
         if (closed[neighbour_index])
         {
           continue;
         }
 
-        const double new_g = g_best[current_index] + 1.0;
+        const double new_g = g_best[current.index] + 1.0;
         if (new_g < g_best[neighbour_index])
         {
           g_best[neighbour_index] = new_g;
-          came_from[neighbour_index] = current_index;
-          neighbour.cost = calculateTotalCost(neighbour, end_cell, new_g);
-          open.push(neighbour);
+          came_from[neighbour_index] = current.index;
+          open.push(
+            {neighbour_index, new_g + calculateHeuristic(neighbour_index, end_index)}
+          );
         }
       }
     }
