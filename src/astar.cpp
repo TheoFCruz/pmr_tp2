@@ -65,6 +65,7 @@ private:
     // get position
     robot_pos.x() = msg->pose.pose.position.x;
     robot_pos.y() = msg->pose.pose.position.y;
+    has_odom = true;
 
     // get quaternion and extract yaw
     double x = msg->pose.pose.orientation.x;
@@ -131,6 +132,23 @@ private:
     goal = Eigen::Vector2d(msg->x, msg->y);
     visualizer.publishPoint("goal_marker", goal, "map", 0, 0.0, 1.0, 0.0);
     received_goal = true;
+
+    if (!has_map)
+    {
+      RCLCPP_WARN(this->get_logger(), "Cannot run A*: map has not been loaded yet.");
+      return;
+    }
+
+    if (!has_odom)
+    {
+      RCLCPP_WARN(this->get_logger(), "Cannot run A*: robot pose has not been received yet.");
+      return;
+    }
+
+    path = runAStar(robot_pos, goal);
+    has_path = !path.empty();
+
+    if (has_path) visualizer.publishPath(path, map_frame_id);
   }
 
   // --------------------- Control Loop -----------------------
@@ -139,8 +157,56 @@ private:
   {
     if (!has_map) return;
     if (!received_goal) return;
+    if (!has_path) return;
 
     // TODO: implement control loop
+  }
+
+  // --------------------- Astar Core ------------------------
+
+  struct Cell
+  {
+    int x;
+    int y;
+  };
+
+  Cell worldToGrid(const Eigen::Vector2d &point)
+  {
+    Cell cell;
+    cell.x = std::floor((point.x() - map_origin_x) / map_resolution);
+    cell.y = std::floor((point.y() - map_origin_y) / map_resolution);
+
+    return cell;
+  }
+
+  Eigen::Vector2d gridToWorld(const Cell &cell)
+  {
+    const double x = map_origin_x + (cell.x + 0.5) * map_resolution;
+    const double y = map_origin_y + (cell.y + 0.5) * map_resolution;
+
+    return Eigen::Vector2d(x, y);
+  }
+
+  std::vector<Eigen::Vector2d> runAStar(
+    const Eigen::Vector2d &start,
+    const Eigen::Vector2d &end)
+  {
+    (void) start;
+    (void) end;
+
+    // TODO: implement A*.
+    
+    // create priority queue O and vector C
+    //    priority = distance + heuristic
+    // add start to O
+    //
+    // while O is not empty:
+    //    remove lowest priority vertex u from O
+    //    if u == end: stop
+    //    if u not in C:
+    //      add u to C
+    //      add all neighbours from u with better new costs to O
+    return {};
   }
 
   // ------------------ Utility Functions ---------------------
@@ -176,7 +242,12 @@ private:
   Eigen::Vector2d goal;
   Eigen::Vector2d robot_pos;
   double          robot_yaw;
-  bool            received_goal;
+  bool            received_goal = false;
+  bool            has_odom = false;
+
+  // path
+  std::vector<Eigen::Vector2d> path;
+  bool                         has_path = false;
 
   // map
   std::vector<uint8_t> occupancy_grid;
