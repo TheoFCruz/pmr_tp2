@@ -9,8 +9,8 @@ def generate_launch_description():
     pmr_tp2_pkg = FindPackageShare('pmr_tp2')
 
     # Filepaths
-    default_map_name = 'bug_map.yaml'
-    default_rviz_config_path = PathJoinSubstitution([pmr_tp2_pkg, 'config', 'config.rviz'])
+    default_map_name = 'maze_map.yaml'
+    default_rviz_config_path = PathJoinSubstitution([pmr_tp2_pkg, 'rviz', 'astar.rviz'])
 
     # Arguments
     map_name = LaunchConfiguration('map_name')

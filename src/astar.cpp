@@ -9,11 +9,15 @@
 
 #include <eigen3/Eigen/Dense>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <queue>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -168,6 +172,20 @@ private:
   {
     int x;
     int y;
+    double cost = -1.0;
+  };
+
+  struct CompareCell
+  {
+    bool operator()(const Cell &a, const Cell &b)
+    {
+      if (a.cost < 0.0 || b.cost < 0.0)
+      {
+        throw std::logic_error("A* open cell has invalid cost.");
+      }
+
+      return a.cost > b.cost;
+    }
   };
 
   Cell worldToGrid(const Eigen::Vector2d &point)
@@ -187,13 +205,105 @@ private:
     return Eigen::Vector2d(x, y);
   }
 
+  int cellToIndex(const Cell &cell)
+  {
+    return cell.y * map_width + cell.x;
+  }
+
+  Cell indexToCell(int index)
+  {
+    Cell cell;
+    cell.x = index % map_width;
+    cell.y = index / map_width;
+
+    return cell;
+  }
+
+  bool isInsideMap(const Cell &cell)
+  {
+    return cell.x >= 0 && cell.x < map_width &&
+      cell.y >= 0 && cell.y < map_height;
+  }
+
+  bool isFreeCell(const Cell &cell)
+  {
+    return isInsideMap(cell) &&
+      occupancy_grid[cellToIndex(cell)] == FREE_CELL;
+  }
+
+  std::vector<Cell> getNeighbours(const Cell &cell)
+  {
+    std::vector<Cell> neighbours;
+
+    const std::vector<Cell> candidates = {
+      {cell.x + 1, cell.y},
+      {cell.x - 1, cell.y},
+      {cell.x, cell.y + 1},
+      {cell.x, cell.y - 1}
+    };
+
+    for (const Cell &candidate : candidates)
+    {
+      if (isFreeCell(candidate))
+      {
+        neighbours.push_back(candidate);
+      }
+    }
+
+    return neighbours;
+  }
+
+  double calculateTotalCost(
+    const Cell &cell,
+    const Cell &end,
+    double distance_from_start)
+  {
+    const double heuristic =
+      std::abs(cell.x - end.x) + std::abs(cell.y - end.y);
+
+    return distance_from_start + heuristic;
+  }
+
+  std::vector<Eigen::Vector2d> buildPath(
+    const std::vector<int> &came_from,
+    int start_index,
+    int end_index)
+  {
+    std::vector<Eigen::Vector2d> path_points;
+    std::vector<int> path_indices;
+
+    int current_index = end_index;
+    while (current_index != -1)
+    {
+      path_indices.push_back(current_index);
+
+      if (current_index == start_index)
+      {
+        break;
+      }
+
+      current_index = came_from[current_index];
+    }
+
+    if (path_indices.back() != start_index)
+    {
+      return {};
+    }
+
+    std::reverse(path_indices.begin(), path_indices.end());
+
+    for (int index : path_indices)
+    {
+      path_points.push_back(gridToWorld(indexToCell(index)));
+    }
+
+    return path_points;
+  }
+
   std::vector<Eigen::Vector2d> runAStar(
     const Eigen::Vector2d &start,
     const Eigen::Vector2d &end)
   {
-    (void) start;
-    (void) end;
-
     // TODO: implement A*.
     
     // create priority queue O and vector C
@@ -206,6 +316,69 @@ private:
     //    if u not in C:
     //      add u to C
     //      add all neighbours from u with better new costs to O
+    Cell start_cell = worldToGrid(start);
+    Cell end_cell = worldToGrid(end);
+
+    if (!isFreeCell(start_cell) || !isFreeCell(end_cell))
+    {
+      RCLCPP_WARN(this->get_logger(), "A* start or goal cell is not free.");
+      return {};
+    }
+
+    const int map_size = map_width * map_height;
+    const int start_index = cellToIndex(start_cell);
+    const int end_index = cellToIndex(end_cell);
+
+    std::priority_queue<Cell, std::vector<Cell>, CompareCell> open;
+    std::vector<uint8_t> closed(map_size, 0);
+    std::vector<double> g_best(
+      map_size,
+      std::numeric_limits<double>::infinity()
+    );
+    std::vector<int> came_from(map_size, -1);
+
+    g_best[start_index] = 0.0;
+    start_cell.cost = calculateTotalCost(start_cell, end_cell, 0.0);
+    open.push(start_cell);
+
+    while (!open.empty())
+    {
+      const Cell current = open.top();
+      open.pop();
+
+      const int current_index = cellToIndex(current);
+      if (closed[current_index])
+      {
+        continue;
+      }
+
+      if (current_index == end_index)
+      {
+        return buildPath(came_from, start_index, end_index);
+      }
+
+      closed[current_index] = 1;
+
+      for (Cell neighbour : getNeighbours(current))
+      {
+        const int neighbour_index = cellToIndex(neighbour);
+        if (closed[neighbour_index])
+        {
+          continue;
+        }
+
+        const double new_g = g_best[current_index] + 1.0;
+        if (new_g < g_best[neighbour_index])
+        {
+          g_best[neighbour_index] = new_g;
+          came_from[neighbour_index] = current_index;
+          neighbour.cost = calculateTotalCost(neighbour, end_cell, new_g);
+          open.push(neighbour);
+        }
+      }
+    }
+
+    RCLCPP_WARN(this->get_logger(), "A* could not find a path.");
     return {};
   }
 
