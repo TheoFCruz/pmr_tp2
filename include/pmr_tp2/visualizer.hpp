@@ -3,8 +3,6 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <geometry_msgs/msg/point.hpp>
-#include <geometry_msgs/msg/pose_stamped.hpp>
-#include <nav_msgs/msg/path.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
 #include <eigen3/Eigen/Dense>
@@ -16,16 +14,14 @@
 class Visualizer
 {
   using Point = geometry_msgs::msg::Point;
-  using PoseStamped = geometry_msgs::msg::PoseStamped;
-  using Path = nav_msgs::msg::Path;
   using Marker = visualization_msgs::msg::Marker;
 
 public:
   explicit Visualizer(rclcpp::Node *node)
   : node(node)
   {
-    std::string topic = std::string(node->get_name()) + "/path";
-    path_publisher = node->create_publisher<Path>(
+    std::string topic = std::string(node->get_name()) + "/path_marker";
+    path_publisher = node->create_publisher<Marker>(
       topic,
       rclcpp::QoS(1).transient_local().reliable()
     );
@@ -112,22 +108,30 @@ public:
   {
     if (!path_publisher) return;
 
-    Path path;
-    path.header.frame_id = frame_id;
-    path.header.stamp = node->now();
+    Marker marker;
+    marker.header.frame_id = frame_id;
+    marker.header.stamp = node->now();
+    marker.ns = "path";
+    marker.id = 0;
+    marker.type = Marker::LINE_STRIP;
+    marker.action = Marker::ADD;
+    marker.pose.orientation.w = 1.0;
+    marker.scale.x = 0.1;
+    marker.color.r = 0.0;
+    marker.color.g = 1.0;
+    marker.color.b = 0.0;
+    marker.color.a = 1.0;
 
     for (const auto& point : points)
     {
-      PoseStamped pose;
-      pose.header = path.header;
-      pose.pose.position.x = point.x();
-      pose.pose.position.y = point.y();
-      pose.pose.position.z = 0.0;
-      pose.pose.orientation.w = 1.0;
-      path.poses.push_back(pose);
+      Point marker_point;
+      marker_point.x = point.x();
+      marker_point.y = point.y();
+      marker_point.z = 0.02;
+      marker.points.push_back(marker_point);
     }
 
-    path_publisher->publish(path);
+    path_publisher->publish(marker);
   }
 
 private:
@@ -147,5 +151,5 @@ private:
 
   // map topic to publisher
   std::map<std::string, rclcpp::Publisher<Marker>::SharedPtr> marker_publishers;
-  rclcpp::Publisher<Path>::SharedPtr path_publisher;
+  rclcpp::Publisher<Marker>::SharedPtr path_publisher;
 };
