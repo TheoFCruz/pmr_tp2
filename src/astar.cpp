@@ -198,10 +198,7 @@ private:
     const int x = std::floor((point.x() - map_origin_x) / map_resolution);
     const int y = std::floor((point.y() - map_origin_y) / map_resolution);
 
-    if (!isInsideMap(x, y))
-    {
-      return -1;
-    }
+    if (!isInsideMap(x, y)) return -1;
 
     return y * map_width + x;
   }
@@ -214,11 +211,13 @@ private:
     return Eigen::Vector2d(x, y);
   }
 
-  bool isFreeCell(int index)
+  bool isValidCell(int index)
   {
-    return index >= 0 &&
-      index < static_cast<int>(occupancy_grid.size()) &&
-      occupancy_grid[index] == FREE_CELL;
+    if (index < 0) return false;
+    if (index >= static_cast<int>(occupancy_grid.size())) return false;
+    if (occupancy_grid[index] != FREE_CELL) return false;
+
+    return true;
   }
 
   std::vector<int> getNeighbours(int index)
@@ -236,10 +235,7 @@ private:
 
     for (int candidate : candidates)
     {
-      if (isFreeCell(candidate))
-      {
-        neighbours.push_back(candidate);
-      }
+      if (isValidCell(candidate)) neighbours.push_back(candidate);
     }
 
     return neighbours;
@@ -267,19 +263,11 @@ private:
     while (current_index != -1)
     {
       path_indices.push_back(current_index);
-
-      if (current_index == start_index)
-      {
-        break;
-      }
-
+      if (current_index == start_index) break;
       current_index = came_from[current_index];
     }
 
-    if (path_indices.back() != start_index)
-    {
-      return {};
-    }
+    if (path_indices.back() != start_index) return {};
 
     std::reverse(path_indices.begin(), path_indices.end());
 
@@ -295,67 +283,56 @@ private:
     const Eigen::Vector2d &start,
     const Eigen::Vector2d &end)
   {
-    // create priority queue O and vector C
-    //    priority = distance + heuristic
-    // add start to O
-    //
-    // while O is not empty:
-    //    remove lowest priority vertex u from O
-    //    if u == end: stop
-    //    if u not in C:
-    //      add u to C
-    //      add all neighbours from u with better new costs to O
+    // Convert start and goal from world coordinates to grid indices.
     const int start_index = worldToIndex(start);
     const int end_index = worldToIndex(end);
 
-    if (!isFreeCell(start_index) || !isFreeCell(end_index))
+    // Abort early if either endpoint is outside the map or occupied.
+    if (!isValidCell(start_index) || !isValidCell(end_index))
     {
-      RCLCPP_WARN(this->get_logger(), "A* start or goal cell is not free.");
+      RCLCPP_WARN(this->get_logger(), "A* start or goal cell is not valid.");
       return {};
     }
 
     const int map_size = map_width * map_height;
 
+    // Prepare the open queue, closed set, best costs, and parent links.
     std::priority_queue< CellEntry, std::vector<CellEntry>, CompareCellEntry> open;
     std::vector<uint8_t> closed(map_size, 0);
     std::vector<double> g_best(map_size, std::numeric_limits<double>::infinity());
     std::vector<int> came_from(map_size, -1);
 
+    // Seed the search with the start cell.
     g_best[start_index] = 0.0;
     open.push({start_index, calculateHeuristic(start_index, end_index)});
 
     while (!open.empty())
     {
+      // Expand the currently most promising cell.
       const CellEntry current = open.top();
       open.pop();
 
-      if (closed[current.index])
-      {
-        continue;
-      }
+      // Skip stale queue entries for cells already expanded.
+      if (closed[current.index]) continue;
 
-      if (current.index == end_index)
-      {
-        return buildPath(came_from, start_index, end_index);
-      }
+      // Stop when the goal is reached and reconstruct the path.
+      if (current.index == end_index) return buildPath(came_from, start_index, end_index);
 
+      // Mark the current cell as expanded.
       closed[current.index] = 1;
 
+      // Relax all free non-closed neighbours.
       for (int neighbour_index : getNeighbours(current.index))
       {
-        if (closed[neighbour_index])
-        {
-          continue;
-        }
+        if (closed[neighbour_index]) continue;
 
+        // Update the neighbour when this path is cheaper than the previous best.
         const double new_g = g_best[current.index] + 1.0;
         if (new_g < g_best[neighbour_index])
         {
           g_best[neighbour_index] = new_g;
           came_from[neighbour_index] = current.index;
-          open.push(
-            {neighbour_index, new_g + calculateHeuristic(neighbour_index, end_index)}
-          );
+          open.push({neighbour_index, new_g + calculateHeuristic(neighbour_index, end_index)});
         }
       }
     }
