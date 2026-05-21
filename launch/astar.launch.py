@@ -25,7 +25,7 @@ def generate_launch_description():
 
     declare_map_name = DeclareLaunchArgument(
         'map_name',
-        default_value='maze_map.yaml',
+        default_value='small_maze.yaml',
         description='Map YAML file name'
     )
 

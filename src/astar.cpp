@@ -151,6 +151,7 @@ private:
 
     path = runAStar(robot_pos, goal);
     has_path = !path.empty();
+    waypoint_i = 0;
 
     if (has_path) visualizer.publishPath(path, map_frame_id);
   }
@@ -162,8 +163,28 @@ private:
     if (!has_map) return;
     if (!received_goal) return;
     if (!has_path) return;
+    
+    if ((robot_pos - goal).norm() <= ERROR_TH)
+    {
+      sendVelocity({0, 0});
+      received_goal = false;
+      has_path = false; 
+      RCLCPP_INFO(this->get_logger(), "Reached goal. Stopping control");
+      return;
+    }
 
-    // TODO: implement control loop
+    std::vector<Eigen::Vector2d> followed_path = simplifyPath(path);
+    Eigen::Vector2d waypoint = followed_path[waypoint_i];
+
+    Eigen::Vector2d heading = {cos(robot_yaw), sin(robot_yaw)};
+    Eigen::Vector2d x_d = robot_pos + D*heading;
+    Eigen::Vector2d vel = (waypoint - x_d)*KP;
+    sendVelocity(vel);
+
+    if ((waypoint - robot_pos).norm() <= ERROR_TH)
+    {
+      waypoint_i++;
+    }
   }
 
   // --------------------- Astar Core ------------------------
@@ -360,6 +381,22 @@ private:
     cmd_vel_pub->publish(vel_twist);
   }
 
+  std::vector<Eigen::Vector2d> simplifyPath(const std::vector<Eigen::Vector2d>& path)
+  {
+    std::vector<Eigen::Vector2d> result;
+
+    result.push_back(path[0]);
+    for (size_t i = 1; i < path.size()-1; i++)
+    {
+      if (path[i].x() == path[i-1].x() && path[i].x() == path[i+1].x()) continue;
+      if (path[i].y() == path[i-1].y() && path[i].y() == path[i+1].y()) continue;
+      result.push_back(path[i]);
+    }
+    result.push_back(path[path.size()-1]);
+
+    return result;
+  }
+
   // --------------------- Variables --------------------------
 
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub;
@@ -379,6 +416,7 @@ private:
 
   // path
   std::vector<Eigen::Vector2d> path;
+  size_t                       waypoint_i;
   bool                         has_path = false;
 
   // map
@@ -394,6 +432,8 @@ private:
   // consts
   const unsigned LOOP_DT_MS = 100;
   const double   D = 0.1;
+  const double   KP = 2.0;
+  const double   ERROR_TH = 0.25;
   const uint8_t  FREE_CELL = 0;
   const uint8_t  BLOCKED_CELL = 1;
 };

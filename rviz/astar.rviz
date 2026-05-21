@@ -6,6 +6,7 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
+        - /Grid1
         - /Map1/Topic1
         - /Path1
       Splitter Ratio: 0.5
@@ -32,7 +33,7 @@ Visualization Manager:
   Class: ""
   Displays:
     - Alpha: 0.5
-      Cell Size: 0.5
+      Cell Size: 0.6000000238418579
       Class: rviz_default_plugins/Grid
       Color: 160; 160; 164
       Enabled: true
@@ -46,7 +47,7 @@ Visualization Manager:
         Y: 0
         Z: 0
       Plane: XY
-      Plane Cell Count: 50
+      Plane Cell Count: 21
       Reference Frame: <Fixed Frame>
       Value: true
     - Alpha: 0.699999988079071
@@ -228,7 +229,7 @@ Visualization Manager:
       Enabled: true
       Name: Path
       Namespaces:
-        path: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -292,11 +293,11 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 35.499168395996094
+      Scale: 24.995302200317383
       Target Frame: <Fixed Frame>
       Value: TopDownOrtho (rviz_default_plugins)
-      X: 1.3894926309585571
-      Y: 0.26312196254730225
+      X: -0.11614862084388733
+      Y: -0.1111716777086258
     Saved: ~
 Window Geometry:
   Displays:
