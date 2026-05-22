@@ -15,6 +15,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <queue>
 #include <stdexcept>
@@ -192,27 +193,27 @@ private:
   struct CellEntry
   {
     int index;
-    double cost = -1.0;
+    double distance = -1.0;
+    double heuristic = -1.0;
+    int came_from = -1;
   };
 
   struct CompareCellEntry
   {
     bool operator()(const CellEntry &a, const CellEntry &b)
     {
-      if (a.cost < 0.0 || b.cost < 0.0)
+      if (a.distance < 0.0 || b.distance < 0.0)
       {
-        throw std::logic_error("A* open cell has invalid cost.");
+        throw std::logic_error("A* open cell has invalid distance.");
+      }
+      if (a.heuristic < 0.0 || b.heuristic < 0.0)
+      {
+        throw std::logic_error("A* open cell has invalid heuristic.");
       }
 
-      return a.cost > b.cost;
+      return a.distance + a.heuristic > b.distance + b.heuristic;
     }
   };
-
-  bool isInsideMap(int x, int y)
-  {
-    return x >= 0 && x < map_width &&
-      y >= 0 && y < map_height;
-  }
 
   int worldToIndex(const Eigen::Vector2d &point)
   {
@@ -239,6 +240,12 @@ private:
     if (occupancy_grid[index] != FREE_CELL) return false;
 
     return true;
+  }
+
+  bool isInsideMap(int x, int y)
+  {
+    return x >= 0 && x < map_width &&
+      y >= 0 && y < map_height;
   }
 
   std::vector<int> getNeighbours(int index)
@@ -273,7 +280,7 @@ private:
   }
 
   std::vector<Eigen::Vector2d> buildPath(
-    const std::vector<int> &came_from,
+    const std::map<int, CellEntry>& closed,
     int start_index,
     int end_index)
   {
@@ -285,7 +292,8 @@ private:
     {
       path_indices.push_back(current_index);
       if (current_index == start_index) break;
-      current_index = came_from[current_index];
+
+      current_index = closed.at(current_index).came_from;
     }
 
     if (path_indices.back() != start_index) return {};
@@ -296,7 +304,6 @@ private:
     {
       path_points.push_back(indexToWorld(index));
     }
-
     return path_points;
   }
 
@@ -315,17 +322,12 @@ private:
       return {};
     }
 
-    const int map_size = map_width * map_height;
-
-    // Prepare the open queue, closed set, best costs, and parent links.
+    // Prepare the open queue and closed set.
     std::priority_queue< CellEntry, std::vector<CellEntry>, CompareCellEntry> open;
-    std::vector<uint8_t> closed(map_size, 0);
-    std::vector<double> g_best(map_size, std::numeric_limits<double>::infinity());
-    std::vector<int> came_from(map_size, -1);
+    std::map<int, CellEntry> closed;
 
     // Seed the search with the start cell.
-    g_best[start_index] = 0.0;
-    open.push({start_index, calculateHeuristic(start_index, end_index)});
+    open.push({start_index, 0, calculateHeuristic(start_index, end_index), -1});
 
     while (!open.empty())
     {
@@ -334,27 +336,28 @@ private:
       open.pop();
 
       // Skip stale queue entries for cells already expanded.
-      if (closed[current.index]) continue;
+      if (closed.find(current.index) != closed.end()) continue;
+
+      // Add current cell to closed.
+      closed[current.index] = current;
 
       // Stop when the goal is reached and reconstruct the path.
-      if (current.index == end_index) return buildPath(came_from, start_index, end_index);
-
-      // Mark the current cell as expanded.
-      closed[current.index] = 1;
+      if (current.index == end_index) return buildPath(closed, start_index, end_index);
 
       // Relax all free non-closed neighbours.
       for (int neighbour_index : getNeighbours(current.index))
       {
-        if (closed[neighbour_index]) continue;
+        if (closed.find(neighbour_index) != closed.end()) continue;
 
-        // Update the neighbour when this path is cheaper than the previous best.
-        const double new_g = g_best[current.index] + 1.0;
-        if (new_g < g_best[neighbour_index])
-        {
-          g_best[neighbour_index] = new_g;
-          came_from[neighbour_index] = current.index;
-          open.push({neighbour_index, new_g + calculateHeuristic(neighbour_index, end_index)});
-        }
+        // Add neighbour to open set
+        CellEntry neighbour = {
+          neighbour_index,
+          current.distance + 1.0,
+          calculateHeuristic(neighbour_index, end_index),
+          current.index
+        };
+        // Duplicates are ok: the first popped entry for an index is the best one.
+        open.push(neighbour);
       }
     }
 
