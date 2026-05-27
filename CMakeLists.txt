@@ -29,9 +29,20 @@ ament_target_dependencies(astar
   Eigen3
 )
 
+add_executable(gvd
+  src/gvd.cpp
+)
+ament_target_dependencies(gvd
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  Eigen3
+)
+
 # Install
 install(TARGETS 
   astar
+  gvd
   DESTINATION lib/${PROJECT_NAME}
 )
 
