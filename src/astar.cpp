@@ -175,11 +175,15 @@ private:
     }
 
     std::vector<Eigen::Vector2d> followed_path = simplifyPath(path);
+    followed_path.push_back(goal);
+
     Eigen::Vector2d waypoint = followed_path[waypoint_i];
 
     Eigen::Vector2d heading = {cos(robot_yaw), sin(robot_yaw)};
     Eigen::Vector2d x_d = robot_pos + D*heading;
     Eigen::Vector2d vel = (waypoint - x_d)*KP;
+
+    if (vel.norm() > MAX_SPEED) vel = vel.normalized()*MAX_SPEED;
     sendVelocity(vel);
 
     if ((waypoint - robot_pos).norm() <= ERROR_TH)
@@ -435,7 +439,8 @@ private:
   // consts
   const unsigned LOOP_DT_MS = 100;
   const double   D = 0.1;
-  const double   KP = 2.0;
+  const double   KP = 3.0;
+  const double   MAX_SPEED = 1.0;
   const double   ERROR_TH = 0.25;
   const uint8_t  FREE_CELL = 0;
   const uint8_t  BLOCKED_CELL = 1;
