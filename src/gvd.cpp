@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <queue>
 #include <string>
 #include <vector>
 
@@ -100,7 +101,12 @@ private:
       occupancy_grid[i] = (msg->data[i] == 0) ? FREE_CELL : BLOCKED_CELL;
     }
 
+    brushfire_distance_grid.assign(expected_size, UNVISITED);
+    brushfire_source_grid.assign(expected_size, NO_SOURCE);
+    gvd_grid.assign(expected_size, NON_GVD_CELL);
+
     has_map = true;
+    has_gvd = false;
 
     RCLCPP_INFO(
       this->get_logger(),
@@ -119,6 +125,32 @@ private:
     if (!has_odom) return;
 
     // TODO: implement GVD planning and control.
+  }
+
+  // --------------------- GVD Core ---------------------------
+
+  void buildGVD()
+  {
+    std::queue<int> brushfire_queue;
+
+    labelObstacleSources(brushfire_queue);
+    runBrushfire(brushfire_queue);
+
+    // TODO: label obstacle sources, run brushfire, and mark GVD cells.
+  }
+
+  void labelObstacleSources(std::queue<int> &brushfire_queue)
+  {
+    (void) brushfire_queue;
+
+    // TODO: group connected occupied cells into obstacle sources.
+  }
+
+  void runBrushfire(std::queue<int> &brushfire_queue)
+  {
+    (void) brushfire_queue;
+
+    // TODO: propagate distance/source labels and detect Voronoi cells.
   }
 
   // ------------------ Utility Functions ---------------------
@@ -161,11 +193,21 @@ private:
   double               map_origin_y = 0.0;
   bool                 has_map = false;
 
+  // gvd
+  std::vector<int>     brushfire_distance_grid;
+  std::vector<int>     brushfire_source_grid;
+  std::vector<uint8_t> gvd_grid;
+  bool                 has_gvd = false;
+
   // consts
   const unsigned LOOP_DT_MS = 100;
   const double   D = 0.1;
   const uint8_t  FREE_CELL = 0;
   const uint8_t  BLOCKED_CELL = 1;
+  const uint8_t  NON_GVD_CELL = 0;
+  const uint8_t  GVD_CELL = 1;
+  const int      UNVISITED = -1;
+  const int      NO_SOURCE = -1;
 };
 
 int main(int argc, char ** argv)
