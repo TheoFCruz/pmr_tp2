@@ -36,6 +36,7 @@ ament_target_dependencies(gvd
   rclcpp
   geometry_msgs
   nav_msgs
+  visualization_msgs
   Eigen3
 )
 
