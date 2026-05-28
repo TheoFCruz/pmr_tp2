@@ -106,6 +106,7 @@ private:
     brushfire_distance_grid.assign(expected_size, UNVISITED);
     brushfire_source_grid.assign(expected_size, NO_SOURCE);
     gvd_grid.assign(expected_size, NON_GVD_CELL);
+    thinned_gvd_grid.assign(expected_size, NON_GVD_CELL);
 
     has_map = true;
     has_gvd = false;
@@ -140,6 +141,7 @@ private:
 
     labelObstacleSources(brushfire_queue);
     runBrushfire(brushfire_queue);
+    thinGVD();
     publishGVDCells();
 
     // TODO: label obstacle sources, run brushfire, and mark GVD cells.
@@ -282,13 +284,109 @@ private:
     );
   }
 
+  void thinGVD()
+  {
+    thinned_gvd_grid = gvd_grid;
+    bool changed = true;
+
+    while (changed)
+    {
+      changed = false;
+      std::vector<int> cells_to_remove;
+
+      for (int y = 1; y < map_height - 1; ++y)
+      {
+        for (int x = 1; x < map_width - 1; ++x)
+        {
+          const int index = y * map_width + x;
+          if (thinned_gvd_grid[index] != GVD_CELL) continue;
+
+          const int p2 = thinned_gvd_grid[(y - 1) * map_width + x] == GVD_CELL;
+          const int p3 = thinned_gvd_grid[(y - 1) * map_width + x + 1] == GVD_CELL;
+          const int p4 = thinned_gvd_grid[y * map_width + x + 1] == GVD_CELL;
+          const int p5 = thinned_gvd_grid[(y + 1) * map_width + x + 1] == GVD_CELL;
+          const int p6 = thinned_gvd_grid[(y + 1) * map_width + x] == GVD_CELL;
+          const int p7 = thinned_gvd_grid[(y + 1) * map_width + x - 1] == GVD_CELL;
+          const int p8 = thinned_gvd_grid[y * map_width + x - 1] == GVD_CELL;
+          const int p9 = thinned_gvd_grid[(y - 1) * map_width + x - 1] == GVD_CELL;
+
+          const int neighbours = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+          const int transitions =
+            (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
+            (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
+
+          if (neighbours >= 2 && neighbours <= 6 && transitions == 1 &&
+              p2 * p4 * p6 == 0 && p4 * p6 * p8 == 0)
+          {
+            cells_to_remove.push_back(index);
+          }
+        }
+      }
+
+      for (int index : cells_to_remove)
+      {
+        thinned_gvd_grid[index] = NON_GVD_CELL;
+        changed = true;
+      }
+
+      cells_to_remove.clear();
+
+      for (int y = 1; y < map_height - 1; ++y)
+      {
+        for (int x = 1; x < map_width - 1; ++x)
+        {
+          const int index = y * map_width + x;
+          if (thinned_gvd_grid[index] != GVD_CELL) continue;
+
+          const int p2 = thinned_gvd_grid[(y - 1) * map_width + x] == GVD_CELL;
+          const int p3 = thinned_gvd_grid[(y - 1) * map_width + x + 1] == GVD_CELL;
+          const int p4 = thinned_gvd_grid[y * map_width + x + 1] == GVD_CELL;
+          const int p5 = thinned_gvd_grid[(y + 1) * map_width + x + 1] == GVD_CELL;
+          const int p6 = thinned_gvd_grid[(y + 1) * map_width + x] == GVD_CELL;
+          const int p7 = thinned_gvd_grid[(y + 1) * map_width + x - 1] == GVD_CELL;
+          const int p8 = thinned_gvd_grid[y * map_width + x - 1] == GVD_CELL;
+          const int p9 = thinned_gvd_grid[(y - 1) * map_width + x - 1] == GVD_CELL;
+
+          const int neighbours = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+          const int transitions =
+            (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
+            (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
+
+          if (neighbours >= 2 && neighbours <= 6 && transitions == 1 &&
+              p2 * p4 * p8 == 0 && p2 * p6 * p8 == 0)
+          {
+            cells_to_remove.push_back(index);
+          }
+        }
+      }
+
+      for (int index : cells_to_remove)
+      {
+        thinned_gvd_grid[index] = NON_GVD_CELL;
+        changed = true;
+      }
+    }
+
+    int thinned_cell_count = 0;
+    for (uint8_t cell : thinned_gvd_grid)
+    {
+      if (cell == GVD_CELL) thinned_cell_count++;
+    }
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Thinned GVD to %d cells.",
+      thinned_cell_count
+    );
+  }
+
   void publishGVDCells()
   {
     std::vector<int> gvd_cells;
 
     for (int index = 0; index < map_width * map_height; ++index)
     {
-      if (gvd_grid[index] != GVD_CELL) continue;
+      if (thinned_gvd_grid[index] != GVD_CELL) continue;
       gvd_cells.push_back(index);
     }
 
@@ -365,6 +463,7 @@ private:
   std::vector<int>     brushfire_distance_grid;
   std::vector<int>     brushfire_source_grid;
   std::vector<uint8_t> gvd_grid;
+  std::vector<uint8_t> thinned_gvd_grid;
   bool                 has_gvd = false;
 
   // consts
