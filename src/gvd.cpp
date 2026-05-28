@@ -131,6 +131,7 @@ private:
 
   void buildGVD()
   {
+    // create queue shared by source labeling and brushfire expansion
     std::queue<int> brushfire_queue;
 
     labelObstacleSources(brushfire_queue);
@@ -141,9 +142,64 @@ private:
 
   void labelObstacleSources(std::queue<int> &brushfire_queue)
   {
-    (void) brushfire_queue;
+    const int map_size = map_width * map_height;
 
-    // TODO: group connected occupied cells into obstacle sources.
+    // initialize grids
+    brushfire_distance_grid.assign(map_size, UNVISITED);
+    brushfire_source_grid.assign(map_size, NO_SOURCE);
+    gvd_grid.assign(map_size, NON_GVD_CELL);
+
+    int source_id = 0;
+    for (int index = 0; index < map_size; ++index)
+    {
+      // skip free cells and already labeled obstacle components
+      if (occupancy_grid[index] != BLOCKED_CELL) continue;
+      if (brushfire_source_grid[index] != NO_SOURCE) continue;
+
+      // start a new connected obstacle source
+      std::queue<int> obstacle_queue;
+      obstacle_queue.push(index);
+      brushfire_source_grid[index] = source_id;
+      brushfire_distance_grid[index] = 1;
+
+      while (!obstacle_queue.empty())
+      {
+        // add every obstacle cell to the brushfire seed queue
+        const int current = obstacle_queue.front();
+        obstacle_queue.pop();
+        brushfire_queue.push(current);
+
+        // inspect 4-connected obstacle neighbours
+        const int x = current % map_width;
+        const int y = current / map_width;
+        const std::vector<int> candidates = {
+          (x + 1 < map_width) ? y * map_width + x + 1 : -1,
+          (x - 1 >= 0) ? y * map_width + x - 1 : -1,
+          (y + 1 < map_height) ? (y + 1) * map_width + x : -1,
+          (y - 1 >= 0) ? (y - 1) * map_width + x : -1
+        };
+
+        for (int candidate : candidates)
+        {
+          // grow only through unlabeled occupied cells
+          if (candidate < 0) continue;
+          if (occupancy_grid[candidate] != BLOCKED_CELL) continue;
+          if (brushfire_source_grid[candidate] != NO_SOURCE) continue;
+
+          brushfire_source_grid[candidate] = source_id;
+          brushfire_distance_grid[candidate] = 1;
+          obstacle_queue.push(candidate);
+        }
+      }
+
+      source_id++;
+    }
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Labeled %d obstacle sources for GVD brushfire.",
+      source_id
+    );
   }
 
   void runBrushfire(std::queue<int> &brushfire_queue)
@@ -202,6 +258,8 @@ private:
   // consts
   const unsigned LOOP_DT_MS = 100;
   const double   D = 0.1;
+
+  // labels
   const uint8_t  FREE_CELL = 0;
   const uint8_t  BLOCKED_CELL = 1;
   const uint8_t  NON_GVD_CELL = 0;
