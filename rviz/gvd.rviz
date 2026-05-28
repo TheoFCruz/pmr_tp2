@@ -9,6 +9,7 @@ Panels:
         - /Grid1
         - /Map1/Topic1
         - /Marker1/Topic1
+        - /Border Sources1/Topic1
       Splitter Ratio: 0.5
     Tree Height: 827
   - Class: rviz_common/Selection
@@ -237,6 +238,19 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /gvd_cells
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Border Sources
+      Namespaces:
+        border_sources: true
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /border_sources
       Value: true
   Enabled: true
   Global Options:

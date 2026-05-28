@@ -106,7 +106,7 @@ private:
     brushfire_distance_grid.assign(expected_size, UNVISITED);
     brushfire_source_grid.assign(expected_size, NO_SOURCE);
     gvd_grid.assign(expected_size, NON_GVD_CELL);
-    thinned_gvd_grid.assign(expected_size, NON_GVD_CELL);
+    // thinned_gvd_grid.assign(expected_size, NON_GVD_CELL);
 
     has_map = true;
     has_gvd = false;
@@ -141,7 +141,7 @@ private:
 
     labelObstacleSources(brushfire_queue);
     runBrushfire(brushfire_queue);
-    thinGVD();
+    // thinGVD();
     publishGVDCells();
 
     // TODO: label obstacle sources, run brushfire, and mark GVD cells.
@@ -156,11 +156,24 @@ private:
     brushfire_source_grid.assign(map_size, NO_SOURCE);
     gvd_grid.assign(map_size, NON_GVD_CELL);
 
-    int source_id = 0;
+    for (int index = 0; index < map_size; ++index)
+    {
+      if (occupancy_grid[index] != BLOCKED_CELL) continue;
+
+      const int source_id = borderSourceId(index);
+      if (source_id == NO_SOURCE) continue;
+
+      brushfire_source_grid[index] = source_id;
+      brushfire_distance_grid[index] = 1;
+      brushfire_queue.push(index);
+    }
+
+    int source_id = BORDER_SOURCE_COUNT;
     for (int index = 0; index < map_size; ++index)
     {
       // skip free cells and already labeled obstacle components
       if (occupancy_grid[index] != BLOCKED_CELL) continue;
+      if (borderSourceId(index) != NO_SOURCE) continue;
       if (brushfire_source_grid[index] != NO_SOURCE) continue;
 
       // start a new connected obstacle source
@@ -191,6 +204,7 @@ private:
           // grow only through unlabeled occupied cells
           if (candidate < 0) continue;
           if (occupancy_grid[candidate] != BLOCKED_CELL) continue;
+          if (borderSourceId(candidate) != NO_SOURCE) continue;
           if (brushfire_source_grid[candidate] != NO_SOURCE) continue;
 
           brushfire_source_grid[candidate] = source_id;
@@ -207,6 +221,19 @@ private:
       "Labeled %d obstacle sources for GVD brushfire.",
       source_id
     );
+  }
+
+  int borderSourceId(int index)
+  {
+    const int x = index % map_width;
+    const int y = index / map_width;
+
+    if (y < BORDER_WIDTH_CELLS) return TOP_BORDER_SOURCE;
+    if (x >= map_width - BORDER_WIDTH_CELLS) return RIGHT_BORDER_SOURCE;
+    if (y >= map_height - BORDER_WIDTH_CELLS) return BOTTOM_BORDER_SOURCE;
+    if (x < BORDER_WIDTH_CELLS) return LEFT_BORDER_SOURCE;
+
+    return NO_SOURCE;
   }
 
   void runBrushfire(std::queue<int> &brushfire_queue)
@@ -286,115 +313,198 @@ private:
 
   void thinGVD()
   {
-    thinned_gvd_grid = gvd_grid;
-    bool changed = true;
-
-    while (changed)
-    {
-      changed = false;
-      std::vector<int> cells_to_remove;
-
-      for (int y = 1; y < map_height - 1; ++y)
-      {
-        for (int x = 1; x < map_width - 1; ++x)
-        {
-          const int index = y * map_width + x;
-          if (thinned_gvd_grid[index] != GVD_CELL) continue;
-
-          const int p2 = thinned_gvd_grid[(y - 1) * map_width + x] == GVD_CELL;
-          const int p3 = thinned_gvd_grid[(y - 1) * map_width + x + 1] == GVD_CELL;
-          const int p4 = thinned_gvd_grid[y * map_width + x + 1] == GVD_CELL;
-          const int p5 = thinned_gvd_grid[(y + 1) * map_width + x + 1] == GVD_CELL;
-          const int p6 = thinned_gvd_grid[(y + 1) * map_width + x] == GVD_CELL;
-          const int p7 = thinned_gvd_grid[(y + 1) * map_width + x - 1] == GVD_CELL;
-          const int p8 = thinned_gvd_grid[y * map_width + x - 1] == GVD_CELL;
-          const int p9 = thinned_gvd_grid[(y - 1) * map_width + x - 1] == GVD_CELL;
-
-          const int neighbours = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
-          const int transitions =
-            (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
-            (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
-
-          if (neighbours >= 2 && neighbours <= 6 && transitions == 1 &&
-              p2 * p4 * p6 == 0 && p4 * p6 * p8 == 0)
-          {
-            cells_to_remove.push_back(index);
-          }
-        }
-      }
-
-      for (int index : cells_to_remove)
-      {
-        thinned_gvd_grid[index] = NON_GVD_CELL;
-        changed = true;
-      }
-
-      cells_to_remove.clear();
-
-      for (int y = 1; y < map_height - 1; ++y)
-      {
-        for (int x = 1; x < map_width - 1; ++x)
-        {
-          const int index = y * map_width + x;
-          if (thinned_gvd_grid[index] != GVD_CELL) continue;
-
-          const int p2 = thinned_gvd_grid[(y - 1) * map_width + x] == GVD_CELL;
-          const int p3 = thinned_gvd_grid[(y - 1) * map_width + x + 1] == GVD_CELL;
-          const int p4 = thinned_gvd_grid[y * map_width + x + 1] == GVD_CELL;
-          const int p5 = thinned_gvd_grid[(y + 1) * map_width + x + 1] == GVD_CELL;
-          const int p6 = thinned_gvd_grid[(y + 1) * map_width + x] == GVD_CELL;
-          const int p7 = thinned_gvd_grid[(y + 1) * map_width + x - 1] == GVD_CELL;
-          const int p8 = thinned_gvd_grid[y * map_width + x - 1] == GVD_CELL;
-          const int p9 = thinned_gvd_grid[(y - 1) * map_width + x - 1] == GVD_CELL;
-
-          const int neighbours = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
-          const int transitions =
-            (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
-            (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
-
-          if (neighbours >= 2 && neighbours <= 6 && transitions == 1 &&
-              p2 * p4 * p8 == 0 && p2 * p6 * p8 == 0)
-          {
-            cells_to_remove.push_back(index);
-          }
-        }
-      }
-
-      for (int index : cells_to_remove)
-      {
-        thinned_gvd_grid[index] = NON_GVD_CELL;
-        changed = true;
-      }
-    }
-
-    int thinned_cell_count = 0;
-    for (uint8_t cell : thinned_gvd_grid)
-    {
-      if (cell == GVD_CELL) thinned_cell_count++;
-    }
-
-    RCLCPP_INFO(
-      this->get_logger(),
-      "Thinned GVD to %d cells.",
-      thinned_cell_count
-    );
+    // thinned_gvd_grid = gvd_grid;
+    // bool changed = true;
+    //
+    // while (changed)
+    // {
+    //   changed = false;
+    //   std::vector<int> cells_to_remove;
+    //
+    //   for (int y = 1; y < map_height - 1; ++y)
+    //   {
+    //     for (int x = 1; x < map_width - 1; ++x)
+    //     {
+    //       const int index = y * map_width + x;
+    //       if (thinned_gvd_grid[index] != GVD_CELL) continue;
+    //
+    //       const int p2 = thinned_gvd_grid[(y - 1) * map_width + x] == GVD_CELL;
+    //       const int p3 = thinned_gvd_grid[(y - 1) * map_width + x + 1] == GVD_CELL;
+    //       const int p4 = thinned_gvd_grid[y * map_width + x + 1] == GVD_CELL;
+    //       const int p5 = thinned_gvd_grid[(y + 1) * map_width + x + 1] == GVD_CELL;
+    //       const int p6 = thinned_gvd_grid[(y + 1) * map_width + x] == GVD_CELL;
+    //       const int p7 = thinned_gvd_grid[(y + 1) * map_width + x - 1] == GVD_CELL;
+    //       const int p8 = thinned_gvd_grid[y * map_width + x - 1] == GVD_CELL;
+    //       const int p9 = thinned_gvd_grid[(y - 1) * map_width + x - 1] == GVD_CELL;
+    //
+    //       const int neighbours = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+    //       const int transitions =
+    //         (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
+    //         (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
+    //
+    //       if (neighbours >= 2 && neighbours <= 6 && transitions == 1 &&
+    //           p2 * p4 * p6 == 0 && p4 * p6 * p8 == 0)
+    //       {
+    //         cells_to_remove.push_back(index);
+    //       }
+    //     }
+    //   }
+    //
+    //   for (int index : cells_to_remove)
+    //   {
+    //     thinned_gvd_grid[index] = NON_GVD_CELL;
+    //     changed = true;
+    //   }
+    //
+    //   cells_to_remove.clear();
+    //
+    //   for (int y = 1; y < map_height - 1; ++y)
+    //   {
+    //     for (int x = 1; x < map_width - 1; ++x)
+    //     {
+    //       const int index = y * map_width + x;
+    //       if (thinned_gvd_grid[index] != GVD_CELL) continue;
+    //
+    //       const int p2 = thinned_gvd_grid[(y - 1) * map_width + x] == GVD_CELL;
+    //       const int p3 = thinned_gvd_grid[(y - 1) * map_width + x + 1] == GVD_CELL;
+    //       const int p4 = thinned_gvd_grid[y * map_width + x + 1] == GVD_CELL;
+    //       const int p5 = thinned_gvd_grid[(y + 1) * map_width + x + 1] == GVD_CELL;
+    //       const int p6 = thinned_gvd_grid[(y + 1) * map_width + x] == GVD_CELL;
+    //       const int p7 = thinned_gvd_grid[(y + 1) * map_width + x - 1] == GVD_CELL;
+    //       const int p8 = thinned_gvd_grid[y * map_width + x - 1] == GVD_CELL;
+    //       const int p9 = thinned_gvd_grid[(y - 1) * map_width + x - 1] == GVD_CELL;
+    //
+    //       const int neighbours = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+    //       const int transitions =
+    //         (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
+    //         (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
+    //
+    //       if (neighbours >= 2 && neighbours <= 6 && transitions == 1 &&
+    //           p2 * p4 * p8 == 0 && p2 * p6 * p8 == 0)
+    //       {
+    //         cells_to_remove.push_back(index);
+    //       }
+    //     }
+    //   }
+    //
+    //   for (int index : cells_to_remove)
+    //   {
+    //     thinned_gvd_grid[index] = NON_GVD_CELL;
+    //     changed = true;
+    //   }
+    // }
+    //
+    // int thinned_cell_count = 0;
+    // for (uint8_t cell : thinned_gvd_grid)
+    // {
+    //   if (cell == GVD_CELL) thinned_cell_count++;
+    // }
+    //
+    // RCLCPP_INFO(
+    //   this->get_logger(),
+    //   "Thinned GVD to %d cells.",
+    //   thinned_cell_count
+    // );
   }
 
   void publishGVDCells()
   {
     std::vector<int> gvd_cells;
+    std::vector<int> top_border_cells;
+    std::vector<int> right_border_cells;
+    std::vector<int> bottom_border_cells;
+    std::vector<int> left_border_cells;
 
     for (int index = 0; index < map_width * map_height; ++index)
     {
-      if (thinned_gvd_grid[index] != GVD_CELL) continue;
-      gvd_cells.push_back(index);
+      if (gvd_grid[index] == GVD_CELL)
+      {
+        gvd_cells.push_back(index);
+      }
+
+      if (occupancy_grid[index] != BLOCKED_CELL) continue;
+
+      if (brushfire_source_grid[index] == TOP_BORDER_SOURCE)
+      {
+        top_border_cells.push_back(index);
+      }
+      else if (brushfire_source_grid[index] == RIGHT_BORDER_SOURCE)
+      {
+        right_border_cells.push_back(index);
+      }
+      else if (brushfire_source_grid[index] == BOTTOM_BORDER_SOURCE)
+      {
+        bottom_border_cells.push_back(index);
+      }
+      else if (brushfire_source_grid[index] == LEFT_BORDER_SOURCE)
+      {
+        left_border_cells.push_back(index);
+      }
     }
 
-    if (gvd_cells.empty())
-    {
-      RCLCPP_WARN(this->get_logger(), "No GVD cells to publish.");
-      return;
-    }
+    visualizer.publishCells(
+      "border_sources",
+      top_border_cells,
+      map_width,
+      map_origin_x,
+      map_origin_y,
+      map_resolution,
+      map_frame_id,
+      TOP_BORDER_SOURCE,
+      1.0,
+      0.0,
+      0.0,
+      0.7,
+      0.06
+    );
+
+    visualizer.publishCells(
+      "border_sources",
+      right_border_cells,
+      map_width,
+      map_origin_x,
+      map_origin_y,
+      map_resolution,
+      map_frame_id,
+      RIGHT_BORDER_SOURCE,
+      1.0,
+      0.6,
+      0.0,
+      0.7,
+      0.06
+    );
+
+    visualizer.publishCells(
+      "border_sources",
+      bottom_border_cells,
+      map_width,
+      map_origin_x,
+      map_origin_y,
+      map_resolution,
+      map_frame_id,
+      BOTTOM_BORDER_SOURCE,
+      0.0,
+      0.5,
+      1.0,
+      0.7,
+      0.06
+    );
+
+    visualizer.publishCells(
+      "border_sources",
+      left_border_cells,
+      map_width,
+      map_origin_x,
+      map_origin_y,
+      map_resolution,
+      map_frame_id,
+      LEFT_BORDER_SOURCE,
+      0.6,
+      0.0,
+      1.0,
+      0.7,
+      0.06
+    );
 
     visualizer.publishCells(
       "gvd_cells",
@@ -409,6 +519,11 @@ private:
       1.0,
       1.0
     );
+
+    if (gvd_cells.empty())
+    {
+      RCLCPP_WARN(this->get_logger(), "No GVD cells to publish.");
+    }
 
     RCLCPP_INFO(
       this->get_logger(),
@@ -463,7 +578,7 @@ private:
   std::vector<int>     brushfire_distance_grid;
   std::vector<int>     brushfire_source_grid;
   std::vector<uint8_t> gvd_grid;
-  std::vector<uint8_t> thinned_gvd_grid;
+  // std::vector<uint8_t> thinned_gvd_grid;
   bool                 has_gvd = false;
 
   // consts
@@ -477,6 +592,12 @@ private:
   const uint8_t  GVD_CELL = 1;
   const int      UNVISITED = -1;
   const int      NO_SOURCE = -1;
+  const int      TOP_BORDER_SOURCE = 0;
+  const int      RIGHT_BORDER_SOURCE = 1;
+  const int      BOTTOM_BORDER_SOURCE = 2;
+  const int      LEFT_BORDER_SOURCE = 3;
+  const int      BORDER_SOURCE_COUNT = 4;
+  const int      BORDER_WIDTH_CELLS = 5;
 };
 
 int main(int argc, char ** argv)
