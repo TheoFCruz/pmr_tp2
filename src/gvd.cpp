@@ -22,12 +22,14 @@ class GVD : public rclcpp::Node
 public:
   GVD() : Node("gvd"), visualizer(this)
   {
+    // subscribe to odometry for robot pose feedback
     odom_sub = this->create_subscription<nav_msgs::msg::Odometry>(
       "/odom",
       10,
       std::bind(&GVD::odomCallback, this, std::placeholders::_1)
     );
 
+    // subscribe to the latched occupancy grid map
     auto map_qos = rclcpp::QoS(1).transient_local().reliable();
     map_sub = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
       "/map",
@@ -35,11 +37,13 @@ public:
       std::bind(&GVD::mapCallback, this, std::placeholders::_1)
     );
 
+    // publish velocity commands to the robot
     cmd_vel_pub = this->create_publisher<geometry_msgs::msg::Twist>(
       "/cmd_vel",
       10
     );
 
+    // run the control loop periodically
     control_timer = this->create_wall_timer(
       std::chrono::milliseconds(LOOP_DT_MS),
       std::bind(&GVD::controlLoop, this)
@@ -49,14 +53,22 @@ public:
   }
 
 private:
+  struct GraphNode
+  {
+    Eigen::Vector2d position;
+    std::vector<int> edge_ids;
+  };
+
   // ---------------------- Callbacks -------------------------
 
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
   {
+    // store the robot position
     robot_pos.x() = msg->pose.pose.position.x;
     robot_pos.y() = msg->pose.pose.position.y;
     has_odom = true;
 
+    // convert the odometry quaternion to yaw
     const double x = msg->pose.pose.orientation.x;
     const double y = msg->pose.pose.orientation.y;
     const double z = msg->pose.pose.orientation.z;
@@ -69,6 +81,7 @@ private:
 
   void mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
   {
+    // validate the received map dimensions
     const int received_width = msg->info.width;
     const int received_height = msg->info.height;
 
@@ -90,6 +103,7 @@ private:
       return;
     }
 
+    // store the map metadata
     map_width = received_width;
     map_height = received_height;
     map_resolution = msg->info.resolution;
@@ -97,12 +111,14 @@ private:
     map_origin_y = msg->info.origin.position.y;
     map_frame_id = msg->header.frame_id;
 
+    // convert occupancy values to the internal free/blocked representation
     occupancy_grid.resize(expected_size);
     for (std::size_t i = 0; i < expected_size; ++i)
     {
       occupancy_grid[i] = (msg->data[i] == 0) ? FREE_CELL : BLOCKED_CELL;
     }
 
+    // reset the brushfire and GVD grids
     brushfire_distance_grid.assign(expected_size, UNVISITED);
     brushfire_source_grid.assign(expected_size, NO_SOURCE);
     gvd_grid.assign(expected_size, NON_GVD_CELL);
@@ -119,6 +135,7 @@ private:
       map_resolution
     );
 
+    // rebuild all derived structures from the new map
     buildGVD();
   }
 
@@ -126,6 +143,7 @@ private:
 
   void controlLoop()
   {
+    // wait until both map and odometry are available
     if (!has_map) return;
     if (!has_odom) return;
 
@@ -139,10 +157,18 @@ private:
     // create queue shared by source labeling and brushfire expansion
     std::queue<int> brushfire_queue;
 
+    // label obstacle sources before growing the distance field
     labelObstacleSources(brushfire_queue);
+
+    // expand the brushfire and mark raw GVD cells
     runBrushfire(brushfire_queue);
+
+    // optionally thin the raw GVD before graph extraction
     // thinGVD();
+
+    // publish the raw GVD and graph node candidates
     publishGVDCells();
+    detectGraphNodes();
 
     // TODO: label obstacle sources, run brushfire, and mark GVD cells.
   }
@@ -226,9 +252,11 @@ private:
 
   int borderSourceId(int index)
   {
+    // compute the cell coordinates from the map index
     const int x = index % map_width;
     const int y = index / map_width;
 
+    // assign one source id to each side of the border
     if (y < BORDER_WIDTH_CELLS) return TOP_BORDER_SOURCE;
     if (x >= map_width - BORDER_WIDTH_CELLS) return RIGHT_BORDER_SOURCE;
     if (y >= map_height - BORDER_WIDTH_CELLS) return BOTTOM_BORDER_SOURCE;
@@ -321,6 +349,7 @@ private:
 
   void thinGVD()
   {
+    // skeletonization is currently disabled during graph extraction experiments
     // thinned_gvd_grid = gvd_grid;
     // bool changed = true;
     //
@@ -419,6 +448,7 @@ private:
   {
     std::vector<int> gvd_cells;
 
+    // collect all cells marked as part of the GVD
     for (int index = 0; index < map_width * map_height; ++index)
     {
       if (gvd_grid[index] == GVD_CELL)
@@ -427,6 +457,7 @@ private:
       }
     }
 
+    // publish the GVD cells as a marker point cloud
     visualizer.publishCells(
       "gvd_cells",
       gvd_cells,
@@ -453,17 +484,168 @@ private:
     );
   }
 
+  void detectGraphNodes()
+  {
+    const int map_size = map_width * map_height;
+    std::vector<uint8_t> graph_node_grid(map_size, NON_GRAPH_NODE_CELL);
+    std::vector<Eigen::Vector2d> graph_node_points;
+    std::size_t graph_node_cell_count = 0;
+    graph_nodes.clear();
+
+    const int scan_radius = GRAPH_NODE_SCAN_SIDE / 2;
+
+    // scan a square around each GVD cell to find node candidates
+    for (int y = scan_radius; y < map_height - scan_radius; ++y)
+    {
+      for (int x = scan_radius; x < map_width - scan_radius; ++x)
+      {
+        const int index = y * map_width + x;
+        if (gvd_grid[index] != GVD_CELL) continue;
+
+        std::vector<uint8_t> perimeter_cells;
+
+        // read the square perimeter in order
+        for (int scan_x = x - scan_radius; scan_x <= x + scan_radius; ++scan_x)
+        {
+          const int scan_index = (y - scan_radius) * map_width + scan_x;
+          perimeter_cells.push_back(gvd_grid[scan_index] == GVD_CELL);
+        }
+
+        for (int scan_y = y - scan_radius + 1; scan_y <= y + scan_radius; ++scan_y)
+        {
+          const int scan_index = scan_y * map_width + x + scan_radius;
+          perimeter_cells.push_back(gvd_grid[scan_index] == GVD_CELL);
+        }
+
+        for (int scan_x = x + scan_radius - 1; scan_x >= x - scan_radius; --scan_x)
+        {
+          const int scan_index = (y + scan_radius) * map_width + scan_x;
+          perimeter_cells.push_back(gvd_grid[scan_index] == GVD_CELL);
+        }
+
+        for (int scan_y = y + scan_radius - 1; scan_y > y - scan_radius; --scan_y)
+        {
+          const int scan_index = scan_y * map_width + x - scan_radius;
+          perimeter_cells.push_back(gvd_grid[scan_index] == GVD_CELL);
+        }
+
+        // count separated GVD groups crossing the perimeter
+        int branch_count = 0;
+        for (std::size_t i = 0; i < perimeter_cells.size(); ++i)
+        {
+          const std::size_t previous = (i + perimeter_cells.size() - 1) %
+            perimeter_cells.size();
+          if (perimeter_cells[i] && !perimeter_cells[previous])
+          {
+            branch_count++;
+          }
+        }
+
+        // mark endpoints and junctions as graph node candidates
+        if (branch_count != 2)
+        {
+          graph_node_grid[index] = GRAPH_NODE_CELL;
+        }
+      }
+    }
+
+    std::vector<uint8_t> visited(map_size, 0);
+    for (int index = 0; index < map_size; ++index)
+    {
+      if (graph_node_grid[index] != GRAPH_NODE_CELL) continue;
+      if (visited[index]) continue;
+
+      std::queue<int> cluster_queue;
+      std::vector<int> cluster_cells;
+      double position_x_sum = 0.0;
+      double position_y_sum = 0.0;
+
+      // grow one connected node-candidate cluster
+      cluster_queue.push(index);
+      visited[index] = 1;
+
+      while (!cluster_queue.empty())
+      {
+        const int current = cluster_queue.front();
+        cluster_queue.pop();
+        cluster_cells.push_back(current);
+
+        const int x = current % map_width;
+        const int y = current / map_width;
+        position_x_sum += map_origin_x + (x + 0.5) * map_resolution;
+        position_y_sum += map_origin_y + (y + 0.5) * map_resolution;
+
+        // inspect 8-connected neighbours inside the candidate grid
+        for (int dy = -1; dy <= 1; ++dy)
+        {
+          for (int dx = -1; dx <= 1; ++dx)
+          {
+            if (dx == 0 && dy == 0) continue;
+
+            const int candidate_x = x + dx;
+            const int candidate_y = y + dy;
+            if (candidate_x < 0 || candidate_x >= map_width) continue;
+            if (candidate_y < 0 || candidate_y >= map_height) continue;
+
+            const int candidate = candidate_y * map_width + candidate_x;
+            if (graph_node_grid[candidate] != GRAPH_NODE_CELL) continue;
+            if (visited[candidate]) continue;
+
+            visited[candidate] = 1;
+            cluster_queue.push(candidate);
+          }
+        }
+      }
+
+      // discard very small node-candidate clusters
+      if (static_cast<int>(cluster_cells.size()) < MIN_GRAPH_NODE_CLUSTER_CELLS)
+      {
+        continue;
+      }
+
+      // store one graph node at the mean position of the cluster
+      GraphNode node;
+      node.position.x() = position_x_sum / cluster_cells.size();
+      node.position.y() = position_y_sum / cluster_cells.size();
+      graph_nodes.push_back(node);
+      graph_node_points.push_back(node.position);
+      graph_node_cell_count += cluster_cells.size();
+    }
+
+    // publish graph node mean positions for RViz visualization
+    visualizer.publishPointsArray(
+      "graph_nodes",
+      graph_node_points,
+      map_frame_id,
+      0,
+      1.0,
+      0.0,
+      0.0,
+      0.12
+    );
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Detected %zu graph nodes from %zu candidate cells.",
+      graph_nodes.size(),
+      graph_node_cell_count
+    );
+  }
+
   // ------------------ Utility Functions ---------------------
 
   void sendVelocity(Eigen::Vector2d vel)
   {
+    // split the desired planar velocity into x and y components
     const double v_x = vel.x();
     const double v_y = vel.y();
 
+    // apply feedback linearization for the differential-drive robot
     const double v = v_x * std::cos(robot_yaw) + v_y * std::sin(robot_yaw);
     const double w =
       (-v_x * std::sin(robot_yaw) + v_y * std::cos(robot_yaw)) / D;
 
+    // publish the resulting linear and angular velocity
     geometry_msgs::msg::Twist vel_twist;
     vel_twist.linear.x = v;
     vel_twist.angular.z = w;
@@ -502,28 +684,36 @@ private:
   // std::vector<uint8_t> thinned_gvd_grid;
   bool                 has_gvd = false;
 
+  // graph
+  std::vector<GraphNode> graph_nodes;
+
   // consts
   const unsigned LOOP_DT_MS = 100;
   const double   D = 0.1;
+  const int      BORDER_SOURCE_COUNT = 4;
+  const int      BORDER_WIDTH_CELLS = 5;
+  const int      MIN_GVD_DISTANCE = 10;
+  const int      GRAPH_NODE_SCAN_SIDE = 7;
+  const int      MIN_GRAPH_NODE_CLUSTER_CELLS = 3;
 
   // labels
   const uint8_t  FREE_CELL = 0;
   const uint8_t  BLOCKED_CELL = 1;
   const uint8_t  NON_GVD_CELL = 0;
   const uint8_t  GVD_CELL = 1;
+  const uint8_t  NON_GRAPH_NODE_CELL = 0;
+  const uint8_t  GRAPH_NODE_CELL = 1;
   const int      UNVISITED = -1;
   const int      NO_SOURCE = -1;
   const int      TOP_BORDER_SOURCE = 0;
   const int      RIGHT_BORDER_SOURCE = 1;
   const int      BOTTOM_BORDER_SOURCE = 2;
   const int      LEFT_BORDER_SOURCE = 3;
-  const int      BORDER_SOURCE_COUNT = 4;
-  const int      BORDER_WIDTH_CELLS = 5;
-  const int      MIN_GVD_DISTANCE = 10;
 };
 
 int main(int argc, char ** argv)
 {
+  // initialize and spin the GVD node
   rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<GVD>());
   rclcpp::shutdown();

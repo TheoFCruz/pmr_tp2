@@ -70,7 +70,8 @@ public:
     int id = 0,
     double r = 1.0,
     double g = 0.0,
-    double b = 0.0)
+    double b = 0.0,
+    double z = 0.12)
   {
     auto publisher = getMarkerPublisher(topic);
 
@@ -95,7 +96,7 @@ public:
       Point point;
       point.x = point_vector.x();
       point.y = point_vector.y();
-      point.z = 0.0;
+      point.z = z;
       marker.points.push_back(point);
     }
 
