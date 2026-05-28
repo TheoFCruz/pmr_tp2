@@ -156,6 +156,7 @@ private:
     brushfire_source_grid.assign(map_size, NO_SOURCE);
     gvd_grid.assign(map_size, NON_GVD_CELL);
 
+    // label borders separately
     for (int index = 0; index < map_size; ++index)
     {
       if (occupancy_grid[index] != BLOCKED_CELL) continue;
@@ -265,6 +266,8 @@ private:
           if (brushfire_source_grid[candidate] != brushfire_source_grid[current])
           {
             if (occupancy_grid[current] == FREE_CELL &&
+                brushfire_distance_grid[current] >= MIN_GVD_DISTANCE &&
+                brushfire_distance_grid[candidate] >= MIN_GVD_DISTANCE &&
                 gvd_grid[current] != GVD_CELL)
             {
               gvd_grid[current] = GVD_CELL;
@@ -287,12 +290,17 @@ private:
         // different source labels meeting define a Voronoi candidate
         if (brushfire_source_grid[candidate] != brushfire_source_grid[current])
         {
-          if (gvd_grid[candidate] != GVD_CELL)
+          const bool has_clearance =
+            brushfire_distance_grid[current] >= MIN_GVD_DISTANCE &&
+            brushfire_distance_grid[candidate] >= MIN_GVD_DISTANCE;
+
+          if (has_clearance && gvd_grid[candidate] != GVD_CELL)
           {
             gvd_grid[candidate] = GVD_CELL;
             gvd_cell_count++;
           }
           if (occupancy_grid[current] == FREE_CELL &&
+              has_clearance &&
               gvd_grid[current] != GVD_CELL)
           {
             gvd_grid[current] = GVD_CELL;
@@ -410,10 +418,6 @@ private:
   void publishGVDCells()
   {
     std::vector<int> gvd_cells;
-    std::vector<int> top_border_cells;
-    std::vector<int> right_border_cells;
-    std::vector<int> bottom_border_cells;
-    std::vector<int> left_border_cells;
 
     for (int index = 0; index < map_width * map_height; ++index)
     {
@@ -421,90 +425,7 @@ private:
       {
         gvd_cells.push_back(index);
       }
-
-      if (occupancy_grid[index] != BLOCKED_CELL) continue;
-
-      if (brushfire_source_grid[index] == TOP_BORDER_SOURCE)
-      {
-        top_border_cells.push_back(index);
-      }
-      else if (brushfire_source_grid[index] == RIGHT_BORDER_SOURCE)
-      {
-        right_border_cells.push_back(index);
-      }
-      else if (brushfire_source_grid[index] == BOTTOM_BORDER_SOURCE)
-      {
-        bottom_border_cells.push_back(index);
-      }
-      else if (brushfire_source_grid[index] == LEFT_BORDER_SOURCE)
-      {
-        left_border_cells.push_back(index);
-      }
     }
-
-    visualizer.publishCells(
-      "border_sources",
-      top_border_cells,
-      map_width,
-      map_origin_x,
-      map_origin_y,
-      map_resolution,
-      map_frame_id,
-      TOP_BORDER_SOURCE,
-      1.0,
-      0.0,
-      0.0,
-      0.7,
-      0.06
-    );
-
-    visualizer.publishCells(
-      "border_sources",
-      right_border_cells,
-      map_width,
-      map_origin_x,
-      map_origin_y,
-      map_resolution,
-      map_frame_id,
-      RIGHT_BORDER_SOURCE,
-      1.0,
-      0.6,
-      0.0,
-      0.7,
-      0.06
-    );
-
-    visualizer.publishCells(
-      "border_sources",
-      bottom_border_cells,
-      map_width,
-      map_origin_x,
-      map_origin_y,
-      map_resolution,
-      map_frame_id,
-      BOTTOM_BORDER_SOURCE,
-      0.0,
-      0.5,
-      1.0,
-      0.7,
-      0.06
-    );
-
-    visualizer.publishCells(
-      "border_sources",
-      left_border_cells,
-      map_width,
-      map_origin_x,
-      map_origin_y,
-      map_resolution,
-      map_frame_id,
-      LEFT_BORDER_SOURCE,
-      0.6,
-      0.0,
-      1.0,
-      0.7,
-      0.06
-    );
 
     visualizer.publishCells(
       "gvd_cells",
@@ -598,6 +519,7 @@ private:
   const int      LEFT_BORDER_SOURCE = 3;
   const int      BORDER_SOURCE_COUNT = 4;
   const int      BORDER_WIDTH_CELLS = 5;
+  const int      MIN_GVD_DISTANCE = 10;
 };
 
 int main(int argc, char ** argv)
