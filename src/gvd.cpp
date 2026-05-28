@@ -231,7 +231,6 @@ private:
     detectGraphNodes();
     extractGraphEdges();
     publishGVDCells();
-    publishOrderedEdgeCells();
     publishGraphEdges();
   }
 
@@ -411,8 +410,8 @@ private:
       map_frame_id,
       0,
       0.0,
-      1.0,
-      1.0
+      0.9,
+      0.9
     );
 
     if (gvd_cells.empty())
@@ -444,8 +443,8 @@ private:
       edge_paths,
       map_frame_id,
       0,
-      1.0,
       0.0,
+      1.0,
       1.0,
       1.0,
       0.04,
@@ -461,55 +460,6 @@ private:
       this->get_logger(),
       "Published %zu graph edges.",
       edge_paths.size()
-    );
-  }
-
-  void publishOrderedEdgeCells()
-  {
-    std::vector<int> ordered_cells;
-
-    // collect the BFS-ordered cells used by each graph edge
-    for (const GraphEdge &edge : graph_edges)
-    {
-      ordered_cells.insert(
-        ordered_cells.end(),
-        edge.cells.begin(),
-        edge.cells.end()
-      );
-    }
-
-    std::sort(ordered_cells.begin(), ordered_cells.end());
-    ordered_cells.erase(
-      std::unique(ordered_cells.begin(), ordered_cells.end()),
-      ordered_cells.end()
-    );
-
-    // publish the ordered representative edge route as cells
-    visualizer.publishCells(
-      "ordered_edge_cells",
-      ordered_cells,
-      map_width,
-      map_origin_x,
-      map_origin_y,
-      map_resolution,
-      map_frame_id,
-      0,
-      1.0,
-      1.0,
-      0.0,
-      1.0,
-      0.07
-    );
-
-    if (ordered_cells.empty())
-    {
-      RCLCPP_WARN(this->get_logger(), "No ordered edge cells to publish.");
-    }
-
-    RCLCPP_INFO(
-      this->get_logger(),
-      "Published %zu ordered edge cells.",
-      ordered_cells.size()
     );
   }
 
@@ -662,9 +612,9 @@ private:
       graph_node_points,
       map_frame_id,
       0,
-      1.0,
-      1.0,
+      0.1,
       0.0,
+      0.4,
       0.12
     );
 

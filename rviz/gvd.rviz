@@ -12,6 +12,7 @@ Panels:
         - /Marker2/Topic1
         - /Marker3/Topic1
         - /Marker4/Topic1
+        - /Marker5/Topic1
       Splitter Ratio: 0.5
     Tree Height: 707
   - Class: rviz_common/Selection
@@ -229,10 +230,10 @@ Visualization Manager:
       Value: true
       Visual Enabled: true
     - Class: rviz_default_plugins/Marker
-      Enabled: true
+      Enabled: false
       Name: Marker
       Namespaces:
-        gvd_cells: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -240,7 +241,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /gvd_cells
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/Marker
       Enabled: true
       Name: Marker
@@ -271,14 +272,27 @@ Visualization Manager:
       Enabled: true
       Name: Marker
       Namespaces:
-        ordered_edge_cells: true
+        path: true
       Topic:
         Depth: 5
         Durability Policy: Transient Local
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /ordered_edge_cells
+        Value: /gvd/path_marker
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Marker
+      Namespaces:
+        goal_marker: true
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /goal_marker
       Value: true
   Enabled: true
   Global Options:
@@ -335,11 +349,11 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 109.34210968017578
+      Scale: 40.87289047241211
       Target Frame: <Fixed Frame>
       Value: TopDownOrtho (rviz_default_plugins)
-      X: 0.05953679233789444
-      Y: 1.8059495687484741
+      X: 0.998690128326416
+      Y: -1.2769598960876465
     Saved: ~
 Window Geometry:
   Displays:

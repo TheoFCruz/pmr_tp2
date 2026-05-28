@@ -105,7 +105,11 @@ public:
 
   void publishPath(
     const std::vector<Eigen::Vector2d> &points,
-    const std::string &frame_id = "map")
+    const std::string &frame_id = "map",
+    double r = 1.0,
+    double g = 0.0,
+    double b = 0.0
+  )
   {
     if (!path_publisher) return;
 
@@ -118,9 +122,9 @@ public:
     marker.action = Marker::ADD;
     marker.pose.orientation.w = 1.0;
     marker.scale.x = 0.1;
-    marker.color.r = 0.0;
-    marker.color.g = 1.0;
-    marker.color.b = 0.0;
+    marker.color.r = r;
+    marker.color.g = g;
+    marker.color.b = b;
     marker.color.a = 1.0;
 
     for (const auto& point : points)
@@ -128,7 +132,7 @@ public:
       Point marker_point;
       marker_point.x = point.x();
       marker_point.y = point.y();
-      marker_point.z = 0.02;
+      marker_point.z = 0.12;
       marker.points.push_back(marker_point);
     }
 
