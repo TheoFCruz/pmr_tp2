@@ -311,6 +311,34 @@ private:
     return path_points;
   }
 
+  void publishVisitedCells(const std::map<int, CellEntry>& closed)
+  {
+    std::vector<int> visited_cells;
+
+    for (const auto& cell : closed)
+    {
+      visited_cells.push_back(cell.first);
+    }
+
+    if (visited_cells.empty()) return;
+
+    visualizer.publishCells(
+      "visited_cells",
+      visited_cells,
+      map_width,
+      map_origin_x,
+      map_origin_y,
+      map_resolution,
+      map_frame_id,
+      0,
+      1.0,
+      0.6,
+      0.0,
+      0.35,
+      0.03
+    );
+  }
+
   std::vector<Eigen::Vector2d> runAStar(
     const Eigen::Vector2d &start,
     const Eigen::Vector2d &end)
@@ -346,7 +374,11 @@ private:
       closed[current.index] = current;
 
       // Stop when the goal is reached and reconstruct the path.
-      if (current.index == end_index) return buildPath(closed, start_index, end_index);
+      if (current.index == end_index)
+      {
+        publishVisitedCells(closed);
+        return buildPath(closed, start_index, end_index);
+      }
 
       // Relax all free non-closed neighbours.
       for (int neighbour_index : getNeighbours(current.index))
@@ -366,6 +398,7 @@ private:
     }
 
     RCLCPP_WARN(this->get_logger(), "A* could not find a path.");
+    publishVisitedCells(closed);
     return {};
   }
 

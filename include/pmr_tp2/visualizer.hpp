@@ -146,6 +146,7 @@ public:
     double r = 0.0,
     double g = 1.0,
     double b = 1.0,
+    double a = 1.0,
     double z = 0.04)
   {
     auto publisher = getMarkerPublisher(topic);
@@ -165,7 +166,7 @@ public:
     marker.color.r = r;
     marker.color.g = g;
     marker.color.b = b;
-    marker.color.a = 1.0;
+    marker.color.a = a;
 
     for (int index : cells)
     {
