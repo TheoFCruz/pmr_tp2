@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <algorithm>
+#include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -13,9 +14,11 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <queue>
 #include <string>
+#include <utility>
 #include <vector>
 
 class GVD : public rclcpp::Node
@@ -28,6 +31,13 @@ public:
       "/odom",
       10,
       std::bind(&GVD::odomCallback, this, std::placeholders::_1)
+    );
+
+    // subscribe to the goal point
+    goal_sub = this->create_subscription<geometry_msgs::msg::Point>(
+      "/goal",
+      10,
+      std::bind(&GVD::goalCallback, this, std::placeholders::_1)
     );
 
     // subscribe to the latched occupancy grid map
@@ -66,6 +76,7 @@ private:
     int to_node;
     std::vector<int> cells;
     std::vector<Eigen::Vector2d> path;
+    double cost = 0.0;
   };
 
   // ---------------------- Callbacks -------------------------
@@ -145,6 +156,51 @@ private:
 
     // rebuild all derived structures from the new map
     buildGVD();
+  }
+
+  void goalCallback(geometry_msgs::msg::Point::SharedPtr msg)
+  {
+    RCLCPP_INFO(this->get_logger(), "Received goal: (%.2lf, %.2lf)", msg->x, msg->y);
+
+    goal = Eigen::Vector2d(msg->x, msg->y);
+    visualizer.publishPoint("goal_marker", goal, "map", 0, 0.5, 0.0, 0.5);
+    received_goal = true;
+
+    if (!has_map)
+    {
+      RCLCPP_WARN(this->get_logger(), "Cannot run Dijkstra: map has not been loaded yet.");
+      return;
+    }
+    if (!has_odom)
+    {
+      RCLCPP_WARN(this->get_logger(), "Cannot run Dijkstra: robot pose has not been received yet.");
+      return;
+    }
+    if (graph_nodes.empty())
+    {
+      RCLCPP_WARN(this->get_logger(), "Cannot run Dijkstra: graph has no nodes.");
+      return;
+    }
+
+    const int start_node = nearestGraphNode(robot_pos);
+    const int goal_node = nearestGraphNode(goal);
+    const std::vector<Eigen::Vector2d> graph_path = runDijkstra(start_node, goal_node);
+
+    if (graph_path.empty())
+    {
+      followed_path.clear();
+      has_path = false;
+      return;
+    }
+
+    followed_path.clear();
+    followed_path.push_back(robot_pos);
+    followed_path.insert(followed_path.end(), graph_path.begin(), graph_path.end());
+    followed_path.push_back(goal);
+    has_path = true;
+    waypoint_i = 0;
+
+    visualizer.publishPath(followed_path, map_frame_id);
   }
 
   // --------------------- Control Loop -----------------------
@@ -746,6 +802,11 @@ private:
             edge.path.push_back(graph_nodes[edge.to_node].position);
             edge.path = smoothPath(edge.path);
 
+            for (std::size_t i = 1; i < edge.path.size(); ++i)
+            {
+              edge.cost += (edge.path[i] - edge.path[i - 1]).norm();
+            }
+
             const int edge_id = graph_edges.size();
             graph_edges.push_back(edge);
             graph_nodes[edge.from_node].edge_ids.push_back(edge_id);
@@ -762,7 +823,121 @@ private:
     );
   }
 
+  std::vector<Eigen::Vector2d> runDijkstra(int start_node, int goal_node)
+  {
+    if (start_node < 0 || start_node >= static_cast<int>(graph_nodes.size()))
+    {
+      RCLCPP_WARN(this->get_logger(), "Invalid Dijkstra start node.");
+      return {};
+    }
+    if (goal_node < 0 || goal_node >= static_cast<int>(graph_nodes.size()))
+    {
+      RCLCPP_WARN(this->get_logger(), "Invalid Dijkstra goal node.");
+      return {};
+    }
+    if (start_node == goal_node)
+    {
+      return {graph_nodes[start_node].position};
+    }
+
+    const double infinity = std::numeric_limits<double>::infinity();
+    std::vector<double> best_cost(graph_nodes.size(), infinity);
+    std::vector<int> previous_node(graph_nodes.size(), NO_GRAPH_NODE);
+    std::vector<int> previous_edge(graph_nodes.size(), NO_EDGE);
+
+    using QueueEntry = std::pair<double, int>;
+    std::priority_queue<
+      QueueEntry,
+      std::vector<QueueEntry>,
+      std::greater<QueueEntry>
+    > open;
+
+    best_cost[start_node] = 0.0;
+    open.push({0.0, start_node});
+
+    while (!open.empty())
+    {
+      const double current_cost = open.top().first;
+      const int current_node = open.top().second;
+      open.pop();
+
+      if (current_cost > best_cost[current_node]) continue;
+      if (current_node == goal_node) break;
+
+      // relax every graph edge connected to the current node
+      for (int edge_id : graph_nodes[current_node].edge_ids)
+      {
+        const GraphEdge &edge = graph_edges[edge_id];
+        const int next_node =
+          (edge.from_node == current_node) ? edge.to_node : edge.from_node;
+        const double new_cost = current_cost + edge.cost;
+
+        if (new_cost >= best_cost[next_node]) continue;
+
+        best_cost[next_node] = new_cost;
+        previous_node[next_node] = current_node;
+        previous_edge[next_node] = edge_id;
+        open.push({new_cost, next_node});
+      }
+    }
+
+    if (best_cost[goal_node] == infinity)
+    {
+      RCLCPP_WARN(this->get_logger(), "Dijkstra could not find a graph path.");
+      return {};
+    }
+
+    std::vector<int> edge_path;
+    for (int node = goal_node; node != start_node; node = previous_node[node])
+    {
+      if (node == NO_GRAPH_NODE || previous_edge[node] == NO_EDGE) return {};
+      edge_path.push_back(previous_edge[node]);
+    }
+    std::reverse(edge_path.begin(), edge_path.end());
+
+    std::vector<Eigen::Vector2d> path;
+    int current_node = start_node;
+
+    // concatenate graph edge paths in the direction selected by Dijkstra
+    for (int edge_id : edge_path)
+    {
+      const GraphEdge &edge = graph_edges[edge_id];
+      const bool forward = edge.from_node == current_node;
+      const std::vector<Eigen::Vector2d> &edge_points = edge.path;
+
+      for (std::size_t i = 0; i < edge_points.size(); ++i)
+      {
+        const std::size_t point_index = forward ? i : edge_points.size() - 1 - i;
+        if (!path.empty() && i == 0) continue;
+        path.push_back(edge_points[point_index]);
+      }
+
+      current_node = forward ? edge.to_node : edge.from_node;
+    }
+
+    return path;
+  }
+
   // ------------------ Utility Functions ---------------------
+
+  int nearestGraphNode(const Eigen::Vector2d &point)
+  {
+    int nearest_node = NO_GRAPH_NODE;
+    double nearest_distance = std::numeric_limits<double>::infinity();
+
+    // find the graph node closest to the given world point
+    for (std::size_t i = 0; i < graph_nodes.size(); ++i)
+    {
+      const double distance = (graph_nodes[i].position - point).squaredNorm();
+      if (distance < nearest_distance)
+      {
+        nearest_node = static_cast<int>(i);
+        nearest_distance = distance;
+      }
+    }
+
+    return nearest_node;
+  }
 
   std::vector<Eigen::Vector2d> smoothPath(const std::vector<Eigen::Vector2d> &path)
   {
@@ -805,6 +980,7 @@ private:
 
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr      odom_sub;
+  rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr    goal_sub;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr       cmd_vel_pub;
   rclcpp::TimerBase::SharedPtr                                  control_timer;
 
@@ -812,8 +988,10 @@ private:
 
   // robot
   Eigen::Vector2d robot_pos;
+  Eigen::Vector2d goal;
   double          robot_yaw = 0.0;
   bool            has_odom = false;
+  bool            received_goal = false;
 
   // map
   std::vector<uint8_t> occupancy_grid;
@@ -836,6 +1014,11 @@ private:
   std::vector<GraphEdge> graph_edges;
   std::vector<int>       graph_node_grid;
 
+  // path
+  std::vector<Eigen::Vector2d> followed_path;
+  int                          waypoint_i = 0;
+  bool                         has_path = false;
+
   // consts
   const unsigned LOOP_DT_MS = 100;
   const double   D = 0.1;
@@ -857,6 +1040,7 @@ private:
   const int      UNVISITED = -1;
   const int      NO_SOURCE = -1;
   const int      NO_GRAPH_NODE = -1;
+  const int      NO_EDGE = -1;
   const int      TOP_BORDER_SOURCE = 0;
   const int      RIGHT_BORDER_SOURCE = 1;
   const int      BOTTOM_BORDER_SOURCE = 2;
