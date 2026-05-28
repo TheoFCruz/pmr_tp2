@@ -65,6 +65,7 @@ private:
     int from_node;
     int to_node;
     std::vector<int> cells;
+    std::vector<Eigen::Vector2d> path;
   };
 
   // ---------------------- Callbacks -------------------------
@@ -130,7 +131,6 @@ private:
     brushfire_distance_grid.assign(expected_size, UNVISITED);
     brushfire_source_grid.assign(expected_size, NO_SOURCE);
     gvd_grid.assign(expected_size, NON_GVD_CELL);
-    // thinned_gvd_grid.assign(expected_size, NON_GVD_CELL);
 
     has_map = true;
     has_gvd = false;
@@ -171,13 +171,11 @@ private:
     // expand the brushfire and mark raw GVD cells
     runBrushfire(brushfire_queue);
 
-    // optionally thin the raw GVD before graph extraction
-    // thinGVD();
-
     // publish the raw GVD and graph node candidates
     detectGraphNodes();
     extractGraphEdges();
     publishGVDCells();
+    publishGraphEdges();
   }
 
   void labelObstacleSources(std::queue<int> &brushfire_queue)
@@ -332,103 +330,6 @@ private:
     );
   }
 
-  void thinGVD()
-  {
-    // skeletonization is currently disabled during graph extraction experiments
-    // thinned_gvd_grid = gvd_grid;
-    // bool changed = true;
-    //
-    // while (changed)
-    // {
-    //   changed = false;
-    //   std::vector<int> cells_to_remove;
-    //
-    //   for (int y = 1; y < map_height - 1; ++y)
-    //   {
-    //     for (int x = 1; x < map_width - 1; ++x)
-    //     {
-    //       const int index = y * map_width + x;
-    //       if (thinned_gvd_grid[index] != GVD_CELL) continue;
-    //
-    //       const int p2 = thinned_gvd_grid[(y - 1) * map_width + x] == GVD_CELL;
-    //       const int p3 = thinned_gvd_grid[(y - 1) * map_width + x + 1] == GVD_CELL;
-    //       const int p4 = thinned_gvd_grid[y * map_width + x + 1] == GVD_CELL;
-    //       const int p5 = thinned_gvd_grid[(y + 1) * map_width + x + 1] == GVD_CELL;
-    //       const int p6 = thinned_gvd_grid[(y + 1) * map_width + x] == GVD_CELL;
-    //       const int p7 = thinned_gvd_grid[(y + 1) * map_width + x - 1] == GVD_CELL;
-    //       const int p8 = thinned_gvd_grid[y * map_width + x - 1] == GVD_CELL;
-    //       const int p9 = thinned_gvd_grid[(y - 1) * map_width + x - 1] == GVD_CELL;
-    //
-    //       const int neighbours = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
-    //       const int transitions =
-    //         (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
-    //         (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
-    //
-    //       if (neighbours >= 2 && neighbours <= 6 && transitions == 1 &&
-    //           p2 * p4 * p6 == 0 && p4 * p6 * p8 == 0)
-    //       {
-    //         cells_to_remove.push_back(index);
-    //       }
-    //     }
-    //   }
-    //
-    //   for (int index : cells_to_remove)
-    //   {
-    //     thinned_gvd_grid[index] = NON_GVD_CELL;
-    //     changed = true;
-    //   }
-    //
-    //   cells_to_remove.clear();
-    //
-    //   for (int y = 1; y < map_height - 1; ++y)
-    //   {
-    //     for (int x = 1; x < map_width - 1; ++x)
-    //     {
-    //       const int index = y * map_width + x;
-    //       if (thinned_gvd_grid[index] != GVD_CELL) continue;
-    //
-    //       const int p2 = thinned_gvd_grid[(y - 1) * map_width + x] == GVD_CELL;
-    //       const int p3 = thinned_gvd_grid[(y - 1) * map_width + x + 1] == GVD_CELL;
-    //       const int p4 = thinned_gvd_grid[y * map_width + x + 1] == GVD_CELL;
-    //       const int p5 = thinned_gvd_grid[(y + 1) * map_width + x + 1] == GVD_CELL;
-    //       const int p6 = thinned_gvd_grid[(y + 1) * map_width + x] == GVD_CELL;
-    //       const int p7 = thinned_gvd_grid[(y + 1) * map_width + x - 1] == GVD_CELL;
-    //       const int p8 = thinned_gvd_grid[y * map_width + x - 1] == GVD_CELL;
-    //       const int p9 = thinned_gvd_grid[(y - 1) * map_width + x - 1] == GVD_CELL;
-    //
-    //       const int neighbours = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
-    //       const int transitions =
-    //         (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) +
-    //         (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
-    //
-    //       if (neighbours >= 2 && neighbours <= 6 && transitions == 1 &&
-    //           p2 * p4 * p8 == 0 && p2 * p6 * p8 == 0)
-    //       {
-    //         cells_to_remove.push_back(index);
-    //       }
-    //     }
-    //   }
-    //
-    //   for (int index : cells_to_remove)
-    //   {
-    //     thinned_gvd_grid[index] = NON_GVD_CELL;
-    //     changed = true;
-    //   }
-    // }
-    //
-    // int thinned_cell_count = 0;
-    // for (uint8_t cell : thinned_gvd_grid)
-    // {
-    //   if (cell == GVD_CELL) thinned_cell_count++;
-    // }
-    //
-    // RCLCPP_INFO(
-    //   this->get_logger(),
-    //   "Thinned GVD to %d cells.",
-    //   thinned_cell_count
-    // );
-  }
-
   void publishGVDCells()
   {
     std::vector<int> gvd_cells;
@@ -466,6 +367,43 @@ private:
       this->get_logger(),
       "Published %zu GVD cells.",
       gvd_cells.size()
+    );
+  }
+
+  void publishGraphEdges()
+  {
+    std::vector<std::vector<Eigen::Vector2d>> edge_paths;
+
+    // collect the simplified world-frame path stored in each graph edge
+    for (const GraphEdge &edge : graph_edges)
+    {
+      if (edge.path.size() < 2) continue;
+      edge_paths.push_back(edge.path);
+    }
+
+    // publish all graph edges as disconnected line segments
+    visualizer.publishPaths(
+      "graph_edges",
+      edge_paths,
+      map_frame_id,
+      0,
+      1.0,
+      0.0,
+      1.0,
+      1.0,
+      0.04,
+      0.08
+    );
+
+    if (edge_paths.empty())
+    {
+      RCLCPP_WARN(this->get_logger(), "No graph edges to publish.");
+    }
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Published %zu graph edges.",
+      edge_paths.size()
     );
   }
 
@@ -715,7 +653,20 @@ private:
           GraphEdge edge;
           edge.from_node = adjacent_nodes[i];
           edge.to_node = adjacent_nodes[j];
-          edge.cells = edge_cells;
+          edge.cells = simplifyEdgeCells(edge_cells, edge.from_node, edge.to_node);
+
+          edge.path.push_back(graph_nodes[edge.from_node].position);
+          for (int cell : edge.cells)
+          {
+            const int x = cell % map_width;
+            const int y = cell / map_width;
+            edge.path.push_back(Eigen::Vector2d(
+              map_origin_x + (x + 0.5) * map_resolution,
+              map_origin_y + (y + 0.5) * map_resolution
+            ));
+          }
+          edge.path.push_back(graph_nodes[edge.to_node].position);
+          edge.path = smoothPath(edge.path);
 
           const int edge_id = graph_edges.size();
           graph_edges.push_back(edge);
@@ -733,6 +684,157 @@ private:
   }
 
   // ------------------ Utility Functions ---------------------
+
+  std::vector<int> simplifyEdgeCells(const std::vector<int> &edge_cells, int from_node, int to_node)
+  {
+    const std::vector<int> ordered_cells =
+      orderEdgeCells(edge_cells, from_node, to_node);
+
+    // there is nothing to simplify without intermediate cells
+    if (ordered_cells.size() <= 2)
+    {
+      return ordered_cells;
+    }
+
+    std::vector<int> simplified_cells;
+    simplified_cells.push_back(ordered_cells.front());
+
+    int previous_dx = 0;
+    int previous_dy = 0;
+
+    // keep the previous cell whenever the movement direction changes
+    for (std::size_t i = 1; i < ordered_cells.size(); ++i)
+    {
+      const int previous = ordered_cells[i - 1];
+      const int current = ordered_cells[i];
+      const int dx = current % map_width - previous % map_width;
+      const int dy = current / map_width - previous / map_width;
+
+      if (i == 1)
+      {
+        previous_dx = dx;
+        previous_dy = dy;
+        // continue;
+      }
+
+      if (dx != previous_dx || dy != previous_dy)
+      {
+        simplified_cells.push_back(previous);
+        previous_dx = dx;
+        previous_dy = dy;
+      }
+    }
+
+    simplified_cells.push_back(ordered_cells.back());
+    return simplified_cells;
+  }
+
+  std::vector<int> orderEdgeCells(const std::vector<int> &edge_cells, int from_node, int to_node)
+  {
+    const int map_size = map_width * map_height;
+    std::vector<uint8_t> edge_grid(map_size, 0);
+    int start_cell = -1;
+    int target_cell = -1;
+    double start_distance = -1.0;
+    double target_distance = -1.0;
+
+    // pick the edge cells closest to each endpoint node
+    for (int cell : edge_cells)
+    {
+      edge_grid[cell] = 1;
+
+      const int x = cell % map_width;
+      const int y = cell / map_width;
+      const Eigen::Vector2d cell_position(
+        map_origin_x + (x + 0.5) * map_resolution,
+        map_origin_y + (y + 0.5) * map_resolution
+      );
+
+      const double distance_to_start =
+        (cell_position - graph_nodes[from_node].position).squaredNorm();
+      const double distance_to_target =
+        (cell_position - graph_nodes[to_node].position).squaredNorm();
+
+      if (start_cell < 0 || distance_to_start < start_distance)
+      {
+        start_cell = cell;
+        start_distance = distance_to_start;
+      }
+      if (target_cell < 0 || distance_to_target < target_distance)
+      {
+        target_cell = cell;
+        target_distance = distance_to_target;
+      }
+    }
+
+    if (start_cell < 0 || target_cell < 0) return edge_cells;
+
+    std::queue<int> search_queue;
+    std::vector<uint8_t> visited(map_size, 0);
+    std::vector<int> parent(map_size, -1);
+
+    // search inside the edge component to order cells from node to node
+    visited[start_cell] = 1;
+    search_queue.push(start_cell);
+
+    while (!search_queue.empty() && !visited[target_cell])
+    {
+      const int current = search_queue.front();
+      search_queue.pop();
+
+      const int x = current % map_width;
+      const int y = current / map_width;
+
+      for (int dy = -1; dy <= 1; ++dy)
+      {
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+          if (dx == 0 && dy == 0) continue;
+
+          const int candidate_x = x + dx;
+          const int candidate_y = y + dy;
+          if (candidate_x < 0 || candidate_x >= map_width) continue;
+          if (candidate_y < 0 || candidate_y >= map_height) continue;
+
+          const int candidate = candidate_y * map_width + candidate_x;
+          if (!edge_grid[candidate]) continue;
+          if (visited[candidate]) continue;
+
+          visited[candidate] = 1;
+          parent[candidate] = current;
+          search_queue.push(candidate);
+        }
+      }
+    }
+
+    if (!visited[target_cell]) return edge_cells;
+
+    std::vector<int> ordered_cells;
+    for (int cell = target_cell; cell >= 0; cell = parent[cell])
+    {
+      ordered_cells.push_back(cell);
+    }
+    std::reverse(ordered_cells.begin(), ordered_cells.end());
+    return ordered_cells;
+  }
+
+  std::vector<Eigen::Vector2d> smoothPath(const std::vector<Eigen::Vector2d> &path)
+  {
+    if (path.size() <= 2) return path;
+
+    std::vector<Eigen::Vector2d> smoothed_path = path;
+
+    // keep graph node endpoints fixed and smooth only intermediate points
+    for (std::size_t i = 1; i + 1 < smoothed_path.size(); ++i)
+    {
+      smoothed_path[i] =
+        SMOOTHING_NEIGHBOUR_WEIGHT * smoothed_path[i - 1] +
+        SMOOTHING_CENTER_WEIGHT * smoothed_path[i] +
+        SMOOTHING_NEIGHBOUR_WEIGHT * smoothed_path[i + 1];
+    }
+
+    return smoothed_path;
+  }
 
   void sendVelocity(Eigen::Vector2d vel)
   {
@@ -781,7 +883,6 @@ private:
   std::vector<int>     brushfire_distance_grid;
   std::vector<int>     brushfire_source_grid;
   std::vector<uint8_t> gvd_grid;
-  // std::vector<uint8_t> thinned_gvd_grid;
   bool                 has_gvd = false;
 
   // graph
@@ -797,6 +898,8 @@ private:
   const int      MIN_GVD_DISTANCE = 10;
   const int      GRAPH_NODE_SCAN_SIDE = 7;
   const int      MIN_GRAPH_NODE_CLUSTER_CELLS = 3;
+  const double   SMOOTHING_CENTER_WEIGHT = 0.5;
+  const double   SMOOTHING_NEIGHBOUR_WEIGHT = 0.25;
 
   // labels
   const uint8_t  FREE_CELL = 0;

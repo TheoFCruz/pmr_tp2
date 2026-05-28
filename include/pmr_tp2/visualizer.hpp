@@ -135,6 +135,57 @@ public:
     path_publisher->publish(marker);
   }
 
+  void publishPaths(
+    const std::string &topic,
+    const std::vector<std::vector<Eigen::Vector2d>> &paths,
+    const std::string &frame_id = "map",
+    int id = 0,
+    double r = 0.0,
+    double g = 1.0,
+    double b = 0.0,
+    double a = 1.0,
+    double width = 0.05,
+    double z = 0.08)
+  {
+    auto publisher = getMarkerPublisher(topic);
+
+    Marker marker;
+    marker.header.frame_id = frame_id;
+    marker.header.stamp = node->now();
+    marker.ns = topic;
+    marker.id = id;
+    marker.type = Marker::LINE_LIST;
+    marker.action = Marker::ADD;
+    marker.pose.orientation.w = 1.0;
+
+    marker.scale.x = width;
+
+    marker.color.r = r;
+    marker.color.g = g;
+    marker.color.b = b;
+    marker.color.a = a;
+
+    for (const auto &path : paths)
+    {
+      for (std::size_t i = 1; i < path.size(); ++i)
+      {
+        Point start;
+        start.x = path[i - 1].x();
+        start.y = path[i - 1].y();
+        start.z = z;
+        marker.points.push_back(start);
+
+        Point end;
+        end.x = path[i].x();
+        end.y = path[i].y();
+        end.z = z;
+        marker.points.push_back(end);
+      }
+    }
+
+    publisher->publish(marker);
+  }
+
   void publishCells(
     const std::string &topic,
     const std::vector<int> &cells,
