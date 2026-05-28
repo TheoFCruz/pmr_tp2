@@ -3,7 +3,8 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/odometry.hpp>
-#include <visualization_msgs/msg/marker.hpp>
+
+#include "pmr_tp2/visualizer.hpp"
 
 #include <eigen3/Eigen/Dense>
 
@@ -19,7 +20,7 @@
 class GVD : public rclcpp::Node
 {
 public:
-  GVD() : Node("gvd")
+  GVD() : Node("gvd"), visualizer(this)
   {
     odom_sub = this->create_subscription<nav_msgs::msg::Odometry>(
       "/odom",
@@ -38,12 +39,6 @@ public:
       "/cmd_vel",
       10
     );
-
-    gvd_marker_pub =
-      this->create_publisher<visualization_msgs::msg::Marker>(
-        "/gvd/cells",
-        rclcpp::QoS(1).transient_local().reliable()
-      );
 
     control_timer = this->create_wall_timer(
       std::chrono::milliseconds(LOOP_DT_MS),
@@ -289,44 +284,38 @@ private:
 
   void publishGVDCells()
   {
-    visualization_msgs::msg::Marker marker;
-    marker.header.frame_id = map_frame_id;
-    marker.header.stamp = this->now();
-    marker.ns = "gvd_cells";
-    marker.id = 0;
-    marker.type = visualization_msgs::msg::Marker::POINTS;
-    marker.action = visualization_msgs::msg::Marker::ADD;
-    marker.pose.orientation.w = 1.0;
-    marker.scale.x = map_resolution;
-    marker.scale.y = map_resolution;
-    marker.color.r = 0.0;
-    marker.color.g = 1.0;
-    marker.color.b = 1.0;
-    marker.color.a = 1.0;
+    std::vector<int> gvd_cells;
 
     for (int index = 0; index < map_width * map_height; ++index)
     {
       if (gvd_grid[index] != GVD_CELL) continue;
-
-      geometry_msgs::msg::Point point;
-      point.x = map_origin_x + (index % map_width + 0.5) * map_resolution;
-      point.y = map_origin_y + (index / map_width + 0.5) * map_resolution;
-      point.z = 0.04;
-      marker.points.push_back(point);
+      gvd_cells.push_back(index);
     }
 
-    if (marker.points.empty())
+    if (gvd_cells.empty())
     {
       RCLCPP_WARN(this->get_logger(), "No GVD cells to publish.");
       return;
     }
 
-    gvd_marker_pub->publish(marker);
+    visualizer.publishCells(
+      "gvd_cells",
+      gvd_cells,
+      map_width,
+      map_origin_x,
+      map_origin_y,
+      map_resolution,
+      map_frame_id,
+      0,
+      0.0,
+      1.0,
+      1.0
+    );
 
     RCLCPP_INFO(
       this->get_logger(),
       "Published %zu GVD cells.",
-      marker.points.size()
+      gvd_cells.size()
     );
   }
 
@@ -353,8 +342,9 @@ private:
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr      odom_sub;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr       cmd_vel_pub;
-  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr gvd_marker_pub;
   rclcpp::TimerBase::SharedPtr                                  control_timer;
+
+  Visualizer visualizer;
 
   // robot
   Eigen::Vector2d robot_pos;

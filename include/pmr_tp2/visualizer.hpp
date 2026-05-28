@@ -134,6 +134,51 @@ public:
     path_publisher->publish(marker);
   }
 
+  void publishCells(
+    const std::string &topic,
+    const std::vector<int> &cells,
+    int map_width,
+    double map_origin_x,
+    double map_origin_y,
+    double cell_width,
+    const std::string &frame_id = "map",
+    int id = 0,
+    double r = 0.0,
+    double g = 1.0,
+    double b = 1.0,
+    double z = 0.04)
+  {
+    auto publisher = getMarkerPublisher(topic);
+
+    Marker marker;
+    marker.header.frame_id = frame_id;
+    marker.header.stamp = node->now();
+    marker.ns = topic;
+    marker.id = id;
+    marker.type = Marker::POINTS;
+    marker.action = Marker::ADD;
+    marker.pose.orientation.w = 1.0;
+
+    marker.scale.x = cell_width;
+    marker.scale.y = cell_width;
+
+    marker.color.r = r;
+    marker.color.g = g;
+    marker.color.b = b;
+    marker.color.a = 1.0;
+
+    for (int index : cells)
+    {
+      Point point;
+      point.x = map_origin_x + (index % map_width + 0.5) * cell_width;
+      point.y = map_origin_y + (index / map_width + 0.5) * cell_width;
+      point.z = z;
+      marker.points.push_back(point);
+    }
+
+    publisher->publish(marker);
+  }
+
 private:
   rclcpp::Publisher<Marker>::SharedPtr getMarkerPublisher(
     const std::string &topic)
@@ -141,7 +186,10 @@ private:
     if (marker_publishers.count(topic) == 0)
     {
       marker_publishers[topic] =
-        node->create_publisher<Marker>(topic, 10);
+        node->create_publisher<Marker>(
+          topic,
+          rclcpp::QoS(1).transient_local().reliable()
+        );
     }
 
     return marker_publishers[topic];
