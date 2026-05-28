@@ -3,6 +3,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <visualization_msgs/msg/marker.hpp>
 
 #include <eigen3/Eigen/Dense>
 
@@ -37,6 +38,12 @@ public:
       "/cmd_vel",
       10
     );
+
+    gvd_marker_pub =
+      this->create_publisher<visualization_msgs::msg::Marker>(
+        "/gvd/cells",
+        rclcpp::QoS(1).transient_local().reliable()
+      );
 
     control_timer = this->create_wall_timer(
       std::chrono::milliseconds(LOOP_DT_MS),
@@ -115,6 +122,8 @@ private:
       map_height,
       map_resolution
     );
+
+    buildGVD();
   }
 
   // --------------------- Control Loop -----------------------
@@ -136,6 +145,7 @@ private:
 
     labelObstacleSources(brushfire_queue);
     runBrushfire(brushfire_queue);
+    publishGVDCells();
 
     // TODO: label obstacle sources, run brushfire, and mark GVD cells.
   }
@@ -204,9 +214,120 @@ private:
 
   void runBrushfire(std::queue<int> &brushfire_queue)
   {
-    (void) brushfire_queue;
+    int gvd_cell_count = 0;
 
-    // TODO: propagate distance/source labels and detect Voronoi cells.
+    while (!brushfire_queue.empty())
+    {
+      const int current = brushfire_queue.front();
+      brushfire_queue.pop();
+
+      // inspect 4-connected neighbours
+      const int x = current % map_width;
+      const int y = current / map_width;
+      const std::vector<int> candidates = {
+        (x + 1 < map_width) ? y * map_width + x + 1 : -1,
+        (x - 1 >= 0) ? y * map_width + x - 1 : -1,
+        (y + 1 < map_height) ? (y + 1) * map_width + x : -1,
+        (y - 1 >= 0) ? (y - 1) * map_width + x : -1
+      };
+
+      for (int candidate : candidates)
+      {
+        if (candidate < 0) continue;
+
+        // do not propagate through obstacle cells
+        if (occupancy_grid[candidate] == BLOCKED_CELL)
+        {
+          if (brushfire_source_grid[candidate] != brushfire_source_grid[current])
+          {
+            if (occupancy_grid[current] == FREE_CELL &&
+                gvd_grid[current] != GVD_CELL)
+            {
+              gvd_grid[current] = GVD_CELL;
+              gvd_cell_count++;
+            }
+          }
+          continue;
+        }
+
+        // first wavefront to reach this free cell assigns its distance/source
+        if (brushfire_distance_grid[candidate] == UNVISITED)
+        {
+          brushfire_distance_grid[candidate] =
+            brushfire_distance_grid[current] + 1;
+          brushfire_source_grid[candidate] = brushfire_source_grid[current];
+          brushfire_queue.push(candidate);
+          continue;
+        }
+
+        // different source labels meeting define a Voronoi candidate
+        if (brushfire_source_grid[candidate] != brushfire_source_grid[current])
+        {
+          if (gvd_grid[candidate] != GVD_CELL)
+          {
+            gvd_grid[candidate] = GVD_CELL;
+            gvd_cell_count++;
+          }
+          if (occupancy_grid[current] == FREE_CELL &&
+              gvd_grid[current] != GVD_CELL)
+          {
+            gvd_grid[current] = GVD_CELL;
+            gvd_cell_count++;
+          }
+        }
+      }
+    }
+
+    has_gvd = true;
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Brushfire GVD marked %d cells.",
+      gvd_cell_count
+    );
+  }
+
+  void publishGVDCells()
+  {
+    visualization_msgs::msg::Marker marker;
+    marker.header.frame_id = map_frame_id;
+    marker.header.stamp = this->now();
+    marker.ns = "gvd_cells";
+    marker.id = 0;
+    marker.type = visualization_msgs::msg::Marker::POINTS;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+    marker.pose.orientation.w = 1.0;
+    marker.scale.x = map_resolution;
+    marker.scale.y = map_resolution;
+    marker.color.r = 0.0;
+    marker.color.g = 1.0;
+    marker.color.b = 1.0;
+    marker.color.a = 1.0;
+
+    for (int index = 0; index < map_width * map_height; ++index)
+    {
+      if (gvd_grid[index] != GVD_CELL) continue;
+
+      geometry_msgs::msg::Point point;
+      point.x = map_origin_x + (index % map_width + 0.5) * map_resolution;
+      point.y = map_origin_y + (index / map_width + 0.5) * map_resolution;
+      point.z = 0.04;
+      marker.points.push_back(point);
+    }
+
+    if (marker.points.empty())
+    {
+      RCLCPP_WARN(this->get_logger(), "No GVD cells to publish.");
+      return;
+    }
+
+    gvd_marker_pub->publish(marker);
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Published %zu GVD cells.",
+      marker.points.size()
+    );
   }
 
   // ------------------ Utility Functions ---------------------
@@ -232,6 +353,7 @@ private:
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr      odom_sub;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr       cmd_vel_pub;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr gvd_marker_pub;
   rclcpp::TimerBase::SharedPtr                                  control_timer;
 
   // robot
