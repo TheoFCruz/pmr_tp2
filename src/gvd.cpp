@@ -1,5 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 
+#include <algorithm>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -57,6 +58,13 @@ private:
   {
     Eigen::Vector2d position;
     std::vector<int> edge_ids;
+  };
+
+  struct GraphEdge
+  {
+    int from_node;
+    int to_node;
+    std::vector<int> cells;
   };
 
   // ---------------------- Callbacks -------------------------
@@ -167,10 +175,9 @@ private:
     // thinGVD();
 
     // publish the raw GVD and graph node candidates
-    publishGVDCells();
     detectGraphNodes();
-
-    // TODO: label obstacle sources, run brushfire, and mark GVD cells.
+    extractGraphEdges();
+    publishGVDCells();
   }
 
   void labelObstacleSources(std::queue<int> &brushfire_queue)
@@ -289,27 +296,12 @@ private:
         if (candidate < 0) continue;
 
         // do not propagate through obstacle cells
-        if (occupancy_grid[candidate] == BLOCKED_CELL)
-        {
-          if (brushfire_source_grid[candidate] != brushfire_source_grid[current])
-          {
-            if (occupancy_grid[current] == FREE_CELL &&
-                brushfire_distance_grid[current] >= MIN_GVD_DISTANCE &&
-                brushfire_distance_grid[candidate] >= MIN_GVD_DISTANCE &&
-                gvd_grid[current] != GVD_CELL)
-            {
-              gvd_grid[current] = GVD_CELL;
-              gvd_cell_count++;
-            }
-          }
-          continue;
-        }
+        if (occupancy_grid[candidate] == BLOCKED_CELL) continue;
 
         // first wavefront to reach this free cell assigns its distance/source
         if (brushfire_distance_grid[candidate] == UNVISITED)
         {
-          brushfire_distance_grid[candidate] =
-            brushfire_distance_grid[current] + 1;
+          brushfire_distance_grid[candidate] = brushfire_distance_grid[current] + 1;
           brushfire_source_grid[candidate] = brushfire_source_grid[current];
           brushfire_queue.push(candidate);
           continue;
@@ -325,13 +317,6 @@ private:
           if (has_clearance && gvd_grid[candidate] != GVD_CELL)
           {
             gvd_grid[candidate] = GVD_CELL;
-            gvd_cell_count++;
-          }
-          if (occupancy_grid[current] == FREE_CELL &&
-              has_clearance &&
-              gvd_grid[current] != GVD_CELL)
-          {
-            gvd_grid[current] = GVD_CELL;
             gvd_cell_count++;
           }
         }
@@ -487,9 +472,12 @@ private:
   void detectGraphNodes()
   {
     const int map_size = map_width * map_height;
-    std::vector<uint8_t> graph_node_grid(map_size, NON_GRAPH_NODE_CELL);
+    std::vector<uint8_t> graph_node_candidate_grid;
     std::vector<Eigen::Vector2d> graph_node_points;
     std::size_t graph_node_cell_count = 0;
+
+    graph_node_candidate_grid.assign(map_size, NON_GRAPH_NODE_CELL);
+    graph_node_grid.assign(map_size, NO_GRAPH_NODE);
     graph_nodes.clear();
 
     const int scan_radius = GRAPH_NODE_SCAN_SIDE / 2;
@@ -505,24 +493,28 @@ private:
         std::vector<uint8_t> perimeter_cells;
 
         // read the square perimeter in order
+        // bottom
         for (int scan_x = x - scan_radius; scan_x <= x + scan_radius; ++scan_x)
         {
           const int scan_index = (y - scan_radius) * map_width + scan_x;
           perimeter_cells.push_back(gvd_grid[scan_index] == GVD_CELL);
         }
 
+        // right
         for (int scan_y = y - scan_radius + 1; scan_y <= y + scan_radius; ++scan_y)
         {
           const int scan_index = scan_y * map_width + x + scan_radius;
           perimeter_cells.push_back(gvd_grid[scan_index] == GVD_CELL);
         }
 
+        // top
         for (int scan_x = x + scan_radius - 1; scan_x >= x - scan_radius; --scan_x)
         {
           const int scan_index = (y + scan_radius) * map_width + scan_x;
           perimeter_cells.push_back(gvd_grid[scan_index] == GVD_CELL);
         }
 
+        // left
         for (int scan_y = y + scan_radius - 1; scan_y > y - scan_radius; --scan_y)
         {
           const int scan_index = scan_y * map_width + x - scan_radius;
@@ -544,15 +536,16 @@ private:
         // mark endpoints and junctions as graph node candidates
         if (branch_count != 2)
         {
-          graph_node_grid[index] = GRAPH_NODE_CELL;
+          graph_node_candidate_grid[index] = GRAPH_NODE_CELL;
         }
       }
     }
 
+    // create graph nodes out of cell clusters
     std::vector<uint8_t> visited(map_size, 0);
     for (int index = 0; index < map_size; ++index)
     {
-      if (graph_node_grid[index] != GRAPH_NODE_CELL) continue;
+      if (graph_node_candidate_grid[index] != GRAPH_NODE_CELL) continue;
       if (visited[index]) continue;
 
       std::queue<int> cluster_queue;
@@ -588,7 +581,7 @@ private:
             if (candidate_y < 0 || candidate_y >= map_height) continue;
 
             const int candidate = candidate_y * map_width + candidate_x;
-            if (graph_node_grid[candidate] != GRAPH_NODE_CELL) continue;
+            if (graph_node_candidate_grid[candidate] != GRAPH_NODE_CELL) continue;
             if (visited[candidate]) continue;
 
             visited[candidate] = 1;
@@ -604,12 +597,19 @@ private:
       }
 
       // store one graph node at the mean position of the cluster
+      const int node_id = graph_nodes.size();
       GraphNode node;
       node.position.x() = position_x_sum / cluster_cells.size();
       node.position.y() = position_y_sum / cluster_cells.size();
       graph_nodes.push_back(node);
       graph_node_points.push_back(node.position);
       graph_node_cell_count += cluster_cells.size();
+
+      // mark every cell in this node cluster with its graph node id
+      for (int cell : cluster_cells)
+      {
+        graph_node_grid[cell] = node_id;
+      }
     }
 
     // publish graph node mean positions for RViz visualization
@@ -619,7 +619,7 @@ private:
       map_frame_id,
       0,
       1.0,
-      0.0,
+      1.0,
       0.0,
       0.12
     );
@@ -629,6 +629,106 @@ private:
       "Detected %zu graph nodes from %zu candidate cells.",
       graph_nodes.size(),
       graph_node_cell_count
+    );
+  }
+
+  void extractGraphEdges()
+  {
+    const int map_size = map_width * map_height;
+    std::vector<uint8_t> visited(map_size, 0);
+
+    // clear previous edge data before rebuilding the graph
+    graph_edges.clear();
+    for (GraphNode &node : graph_nodes)
+    {
+      node.edge_ids.clear();
+    }
+
+    // start one edge search from each unvisited non-node GVD cell
+    for (int index = 0; index < map_size; ++index)
+    {
+      if (gvd_grid[index] != GVD_CELL) continue;
+      if (graph_node_grid[index] != NO_GRAPH_NODE) continue;
+      if (visited[index]) continue;
+
+      std::queue<int> edge_queue;
+      std::vector<int> edge_cells;
+      std::vector<int> adjacent_nodes;
+
+      // grow one connected GVD corridor between graph node regions
+      edge_queue.push(index);
+      visited[index] = 1;
+
+      while (!edge_queue.empty())
+      {
+        // add the current corridor cell to this edge component
+        const int current = edge_queue.front();
+        edge_queue.pop();
+        edge_cells.push_back(current);
+
+        const int x = current % map_width;
+        const int y = current / map_width;
+
+        for (int dy = -1; dy <= 1; ++dy)
+        {
+          for (int dx = -1; dx <= 1; ++dx)
+          {
+            if (dx == 0 && dy == 0) continue;
+
+            const int candidate_x = x + dx;
+            const int candidate_y = y + dy;
+            if (candidate_x < 0 || candidate_x >= map_width) continue;
+            if (candidate_y < 0 || candidate_y >= map_height) continue;
+
+            const int candidate = candidate_y * map_width + candidate_x;
+            if (gvd_grid[candidate] != GVD_CELL) continue;
+
+            // record graph nodes touching this corridor component
+            const int node_id = graph_node_grid[candidate];
+            if (node_id != NO_GRAPH_NODE)
+            {
+              if (std::find(adjacent_nodes.begin(), adjacent_nodes.end(), node_id) ==
+                  adjacent_nodes.end())
+              {
+                adjacent_nodes.push_back(node_id);
+              }
+              continue;
+            }
+
+            if (visited[candidate]) continue;
+
+            // continue growing through GVD cells that are not node cells
+            visited[candidate] = 1;
+            edge_queue.push(candidate);
+          }
+        }
+      }
+
+      // ignore dangling corridor components that do not connect two nodes
+      if (adjacent_nodes.size() < 2) continue;
+
+      // create graph edges between every pair of nodes touching the corridor
+      for (std::size_t i = 0; i + 1 < adjacent_nodes.size(); ++i)
+      {
+        for (std::size_t j = i + 1; j < adjacent_nodes.size(); ++j)
+        {
+          GraphEdge edge;
+          edge.from_node = adjacent_nodes[i];
+          edge.to_node = adjacent_nodes[j];
+          edge.cells = edge_cells;
+
+          const int edge_id = graph_edges.size();
+          graph_edges.push_back(edge);
+          graph_nodes[edge.from_node].edge_ids.push_back(edge_id);
+          graph_nodes[edge.to_node].edge_ids.push_back(edge_id);
+        }
+      }
+    }
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Extracted %zu graph edges.",
+      graph_edges.size()
     );
   }
 
@@ -686,6 +786,8 @@ private:
 
   // graph
   std::vector<GraphNode> graph_nodes;
+  std::vector<GraphEdge> graph_edges;
+  std::vector<int>       graph_node_grid;
 
   // consts
   const unsigned LOOP_DT_MS = 100;
@@ -705,6 +807,7 @@ private:
   const uint8_t  GRAPH_NODE_CELL = 1;
   const int      UNVISITED = -1;
   const int      NO_SOURCE = -1;
+  const int      NO_GRAPH_NODE = -1;
   const int      TOP_BORDER_SOURCE = 0;
   const int      RIGHT_BORDER_SOURCE = 1;
   const int      BOTTOM_BORDER_SOURCE = 2;
