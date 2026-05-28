@@ -175,6 +175,7 @@ private:
     detectGraphNodes();
     extractGraphEdges();
     publishGVDCells();
+    publishOrderedEdgeCells();
     publishGraphEdges();
   }
 
@@ -374,7 +375,7 @@ private:
   {
     std::vector<std::vector<Eigen::Vector2d>> edge_paths;
 
-    // collect the simplified world-frame path stored in each graph edge
+    // collect the world-frame path stored in each graph edge
     for (const GraphEdge &edge : graph_edges)
     {
       if (edge.path.size() < 2) continue;
@@ -404,6 +405,55 @@ private:
       this->get_logger(),
       "Published %zu graph edges.",
       edge_paths.size()
+    );
+  }
+
+  void publishOrderedEdgeCells()
+  {
+    std::vector<int> ordered_cells;
+
+    // collect the BFS-ordered cells used by each graph edge
+    for (const GraphEdge &edge : graph_edges)
+    {
+      ordered_cells.insert(
+        ordered_cells.end(),
+        edge.cells.begin(),
+        edge.cells.end()
+      );
+    }
+
+    std::sort(ordered_cells.begin(), ordered_cells.end());
+    ordered_cells.erase(
+      std::unique(ordered_cells.begin(), ordered_cells.end()),
+      ordered_cells.end()
+    );
+
+    // publish the ordered representative edge route as cells
+    visualizer.publishCells(
+      "ordered_edge_cells",
+      ordered_cells,
+      map_width,
+      map_origin_x,
+      map_origin_y,
+      map_resolution,
+      map_frame_id,
+      0,
+      1.0,
+      1.0,
+      0.0,
+      1.0,
+      0.07
+    );
+
+    if (ordered_cells.empty())
+    {
+      RCLCPP_WARN(this->get_logger(), "No ordered edge cells to publish.");
+    }
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Published %zu ordered edge cells.",
+      ordered_cells.size()
     );
   }
 
@@ -573,7 +623,7 @@ private:
   void extractGraphEdges()
   {
     const int map_size = map_width * map_height;
-    std::vector<uint8_t> visited(map_size, 0);
+    std::vector<int> edge_keys;
 
     // clear previous edge data before rebuilding the graph
     graph_edges.clear();
@@ -582,30 +632,15 @@ private:
       node.edge_ids.clear();
     }
 
-    // start one edge search from each unvisited non-node GVD cell
-    for (int index = 0; index < map_size; ++index)
+    // start each edge search from GVD cells adjacent to a graph node
+    for (int node_id = 0; node_id < static_cast<int>(graph_nodes.size()); ++node_id)
     {
-      if (gvd_grid[index] != GVD_CELL) continue;
-      if (graph_node_grid[index] != NO_GRAPH_NODE) continue;
-      if (visited[index]) continue;
-
-      std::queue<int> edge_queue;
-      std::vector<int> edge_cells;
-      std::vector<int> adjacent_nodes;
-
-      // grow one connected GVD corridor between graph node regions
-      edge_queue.push(index);
-      visited[index] = 1;
-
-      while (!edge_queue.empty())
+      for (int node_cell = 0; node_cell < map_size; ++node_cell)
       {
-        // add the current corridor cell to this edge component
-        const int current = edge_queue.front();
-        edge_queue.pop();
-        edge_cells.push_back(current);
+        if (graph_node_grid[node_cell] != node_id) continue;
 
-        const int x = current % map_width;
-        const int y = current / map_width;
+        const int node_x = node_cell % map_width;
+        const int node_y = node_cell / map_width;
 
         for (int dy = -1; dy <= 1; ++dy)
         {
@@ -613,65 +648,109 @@ private:
           {
             if (dx == 0 && dy == 0) continue;
 
-            const int candidate_x = x + dx;
-            const int candidate_y = y + dy;
-            if (candidate_x < 0 || candidate_x >= map_width) continue;
-            if (candidate_y < 0 || candidate_y >= map_height) continue;
+            const int start_x = node_x + dx;
+            const int start_y = node_y + dy;
+            if (start_x < 0 || start_x >= map_width) continue;
+            if (start_y < 0 || start_y >= map_height) continue;
 
-            const int candidate = candidate_y * map_width + candidate_x;
-            if (gvd_grid[candidate] != GVD_CELL) continue;
+            const int start_cell = start_y * map_width + start_x;
+            if (gvd_grid[start_cell] != GVD_CELL) continue;
+            if (graph_node_grid[start_cell] != NO_GRAPH_NODE) continue;
 
-            // record graph nodes touching this corridor component
-            const int node_id = graph_node_grid[candidate];
-            if (node_id != NO_GRAPH_NODE)
+            std::queue<int> edge_queue;
+            std::vector<uint8_t> visited(map_size, 0);
+            std::vector<int> parent(map_size, -1);
+            int target_node = NO_GRAPH_NODE;
+            int target_cell = -1;
+
+            // search through non-node GVD cells until another node is reached
+            edge_queue.push(start_cell);
+            visited[start_cell] = 1;
+
+            while (!edge_queue.empty() && target_node == NO_GRAPH_NODE)
             {
-              if (std::find(adjacent_nodes.begin(), adjacent_nodes.end(), node_id) ==
-                  adjacent_nodes.end())
+              const int current = edge_queue.front();
+              edge_queue.pop();
+
+              const int x = current % map_width;
+              const int y = current / map_width;
+
+              for (int search_dy = -1; search_dy <= 1; ++search_dy)
               {
-                adjacent_nodes.push_back(node_id);
+                for (int search_dx = -1; search_dx <= 1; ++search_dx)
+                {
+                  if (search_dx == 0 && search_dy == 0) continue;
+
+                  const int candidate_x = x + search_dx;
+                  const int candidate_y = y + search_dy;
+                  if (candidate_x < 0 || candidate_x >= map_width) continue;
+                  if (candidate_y < 0 || candidate_y >= map_height) continue;
+
+                  const int candidate = candidate_y * map_width + candidate_x;
+                  if (gvd_grid[candidate] != GVD_CELL) continue;
+
+                  const int candidate_node = graph_node_grid[candidate];
+                  if (candidate_node != NO_GRAPH_NODE)
+                  {
+                    if (candidate_node != node_id)
+                    {
+                      target_node = candidate_node;
+                      target_cell = current;
+                    }
+                    continue;
+                  }
+
+                  if (visited[candidate]) continue;
+
+                  visited[candidate] = 1;
+                  parent[candidate] = current;
+                  edge_queue.push(candidate);
+                }
               }
-              continue;
             }
 
-            if (visited[candidate]) continue;
+            if (target_node == NO_GRAPH_NODE) continue;
 
-            // continue growing through GVD cells that are not node cells
-            visited[candidate] = 1;
-            edge_queue.push(candidate);
+            const int first_node = std::min(node_id, target_node);
+            const int second_node = std::max(node_id, target_node);
+            const int edge_key =
+              first_node * static_cast<int>(graph_nodes.size()) + second_node;
+            if (std::find(edge_keys.begin(), edge_keys.end(), edge_key) !=
+                edge_keys.end())
+            {
+              continue;
+            }
+            edge_keys.push_back(edge_key);
+
+            GraphEdge edge;
+            edge.from_node = node_id;
+            edge.to_node = target_node;
+
+            // reconstruct the ordered cell path found by the BFS
+            for (int cell = target_cell; cell >= 0; cell = parent[cell])
+            {
+              edge.cells.push_back(cell);
+            }
+            std::reverse(edge.cells.begin(), edge.cells.end());
+
+            edge.path.push_back(graph_nodes[edge.from_node].position);
+            for (int cell : edge.cells)
+            {
+              const int x = cell % map_width;
+              const int y = cell / map_width;
+              edge.path.push_back(Eigen::Vector2d(
+                map_origin_x + (x + 0.5) * map_resolution,
+                map_origin_y + (y + 0.5) * map_resolution
+              ));
+            }
+            edge.path.push_back(graph_nodes[edge.to_node].position);
+            edge.path = smoothPath(edge.path);
+
+            const int edge_id = graph_edges.size();
+            graph_edges.push_back(edge);
+            graph_nodes[edge.from_node].edge_ids.push_back(edge_id);
+            graph_nodes[edge.to_node].edge_ids.push_back(edge_id);
           }
-        }
-      }
-
-      // ignore dangling corridor components that do not connect two nodes
-      if (adjacent_nodes.size() < 2) continue;
-
-      // create graph edges between every pair of nodes touching the corridor
-      for (std::size_t i = 0; i + 1 < adjacent_nodes.size(); ++i)
-      {
-        for (std::size_t j = i + 1; j < adjacent_nodes.size(); ++j)
-        {
-          GraphEdge edge;
-          edge.from_node = adjacent_nodes[i];
-          edge.to_node = adjacent_nodes[j];
-          edge.cells = simplifyEdgeCells(edge_cells, edge.from_node, edge.to_node);
-
-          edge.path.push_back(graph_nodes[edge.from_node].position);
-          for (int cell : edge.cells)
-          {
-            const int x = cell % map_width;
-            const int y = cell / map_width;
-            edge.path.push_back(Eigen::Vector2d(
-              map_origin_x + (x + 0.5) * map_resolution,
-              map_origin_y + (y + 0.5) * map_resolution
-            ));
-          }
-          edge.path.push_back(graph_nodes[edge.to_node].position);
-          edge.path = smoothPath(edge.path);
-
-          const int edge_id = graph_edges.size();
-          graph_edges.push_back(edge);
-          graph_nodes[edge.from_node].edge_ids.push_back(edge_id);
-          graph_nodes[edge.to_node].edge_ids.push_back(edge_id);
         }
       }
     }
@@ -684,139 +763,6 @@ private:
   }
 
   // ------------------ Utility Functions ---------------------
-
-  std::vector<int> simplifyEdgeCells(const std::vector<int> &edge_cells, int from_node, int to_node)
-  {
-    const std::vector<int> ordered_cells =
-      orderEdgeCells(edge_cells, from_node, to_node);
-
-    // there is nothing to simplify without intermediate cells
-    if (ordered_cells.size() <= 2)
-    {
-      return ordered_cells;
-    }
-
-    std::vector<int> simplified_cells;
-    simplified_cells.push_back(ordered_cells.front());
-
-    int previous_dx = 0;
-    int previous_dy = 0;
-
-    // keep the previous cell whenever the movement direction changes
-    for (std::size_t i = 1; i < ordered_cells.size(); ++i)
-    {
-      const int previous = ordered_cells[i - 1];
-      const int current = ordered_cells[i];
-      const int dx = current % map_width - previous % map_width;
-      const int dy = current / map_width - previous / map_width;
-
-      if (i == 1)
-      {
-        previous_dx = dx;
-        previous_dy = dy;
-        // continue;
-      }
-
-      if (dx != previous_dx || dy != previous_dy)
-      {
-        simplified_cells.push_back(previous);
-        previous_dx = dx;
-        previous_dy = dy;
-      }
-    }
-
-    simplified_cells.push_back(ordered_cells.back());
-    return simplified_cells;
-  }
-
-  std::vector<int> orderEdgeCells(const std::vector<int> &edge_cells, int from_node, int to_node)
-  {
-    const int map_size = map_width * map_height;
-    std::vector<uint8_t> edge_grid(map_size, 0);
-    int start_cell = -1;
-    int target_cell = -1;
-    double start_distance = -1.0;
-    double target_distance = -1.0;
-
-    // pick the edge cells closest to each endpoint node
-    for (int cell : edge_cells)
-    {
-      edge_grid[cell] = 1;
-
-      const int x = cell % map_width;
-      const int y = cell / map_width;
-      const Eigen::Vector2d cell_position(
-        map_origin_x + (x + 0.5) * map_resolution,
-        map_origin_y + (y + 0.5) * map_resolution
-      );
-
-      const double distance_to_start =
-        (cell_position - graph_nodes[from_node].position).squaredNorm();
-      const double distance_to_target =
-        (cell_position - graph_nodes[to_node].position).squaredNorm();
-
-      if (start_cell < 0 || distance_to_start < start_distance)
-      {
-        start_cell = cell;
-        start_distance = distance_to_start;
-      }
-      if (target_cell < 0 || distance_to_target < target_distance)
-      {
-        target_cell = cell;
-        target_distance = distance_to_target;
-      }
-    }
-
-    if (start_cell < 0 || target_cell < 0) return edge_cells;
-
-    std::queue<int> search_queue;
-    std::vector<uint8_t> visited(map_size, 0);
-    std::vector<int> parent(map_size, -1);
-
-    // search inside the edge component to order cells from node to node
-    visited[start_cell] = 1;
-    search_queue.push(start_cell);
-
-    while (!search_queue.empty() && !visited[target_cell])
-    {
-      const int current = search_queue.front();
-      search_queue.pop();
-
-      const int x = current % map_width;
-      const int y = current / map_width;
-
-      for (int dy = -1; dy <= 1; ++dy)
-      {
-        for (int dx = -1; dx <= 1; ++dx)
-        {
-          if (dx == 0 && dy == 0) continue;
-
-          const int candidate_x = x + dx;
-          const int candidate_y = y + dy;
-          if (candidate_x < 0 || candidate_x >= map_width) continue;
-          if (candidate_y < 0 || candidate_y >= map_height) continue;
-
-          const int candidate = candidate_y * map_width + candidate_x;
-          if (!edge_grid[candidate]) continue;
-          if (visited[candidate]) continue;
-
-          visited[candidate] = 1;
-          parent[candidate] = current;
-          search_queue.push(candidate);
-        }
-      }
-    }
-
-    if (!visited[target_cell]) return edge_cells;
-
-    std::vector<int> ordered_cells;
-    for (int cell = target_cell; cell >= 0; cell = parent[cell])
-    {
-      ordered_cells.push_back(cell);
-    }
-    std::reverse(ordered_cells.begin(), ordered_cells.end());
-    return ordered_cells;
-  }
 
   std::vector<Eigen::Vector2d> smoothPath(const std::vector<Eigen::Vector2d> &path)
   {
@@ -898,8 +844,8 @@ private:
   const int      MIN_GVD_DISTANCE = 10;
   const int      GRAPH_NODE_SCAN_SIDE = 7;
   const int      MIN_GRAPH_NODE_CLUSTER_CELLS = 3;
-  const double   SMOOTHING_CENTER_WEIGHT = 0.5;
-  const double   SMOOTHING_NEIGHBOUR_WEIGHT = 0.25;
+  const double   SMOOTHING_CENTER_WEIGHT = 0.3;
+  const double   SMOOTHING_NEIGHBOUR_WEIGHT = 0.35;
 
   // labels
   const uint8_t  FREE_CELL = 0;
