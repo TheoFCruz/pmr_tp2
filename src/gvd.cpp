@@ -211,7 +211,60 @@ private:
     if (!has_map) return;
     if (!has_odom) return;
 
-    // TODO: implement GVD planning and control.
+    // stop if no path is available yet
+    if (!has_path || followed_path.empty())
+    {
+      sendVelocity(Eigen::Vector2d::Zero());
+      return;
+    }
+
+    // control a point slightly in front of the robot
+    const Eigen::Vector2d heading = {cos(robot_yaw), sin(robot_yaw)};
+    const Eigen::Vector2d control_point = robot_pos + D * heading;
+
+    // skip waypoints that are already close enough
+    while (
+      waypoint_i + 1 < static_cast<int>(followed_path.size()) &&
+      (followed_path[waypoint_i] - control_point).norm() < LOOKAHEAD_DISTANCE)
+    {
+      waypoint_i++;
+    }
+
+    // compute a planar velocity toward the current waypoint
+    const Eigen::Vector2d target = followed_path[waypoint_i];
+    Eigen::Vector2d vel;
+
+    if (waypoint_i == static_cast<int>(followed_path.size()) - 1)
+    {
+      // use proportional control for the final goal
+      vel = CONTROL_GAIN * (target - control_point);
+
+      // keep the command within a safe speed
+      const double speed = vel.norm();
+      if (speed > MAX_SPEED) vel = vel / speed * MAX_SPEED;
+    }
+    else
+    {
+      // follow intermediate waypoints at constant speed
+      const Eigen::Vector2d direction = target - control_point;
+      const double distance = direction.norm();
+
+      if (distance > 0.0) vel = direction / distance * DESIRED_PATH_SPEED;
+      else vel = Eigen::Vector2d::Zero();
+    }
+
+    // stop once the final goal is reached
+    if ((goal - robot_pos).norm() < GOAL_TOLERANCE)
+    {
+      sendVelocity(Eigen::Vector2d::Zero());
+      has_path = false;
+      waypoint_i = 0;
+      RCLCPP_INFO(this->get_logger(), "Goal reached.");
+      return;
+    }
+
+    // publish the velocity command
+    sendVelocity(vel);
   }
 
   // --------------------- GVD Core ---------------------------
@@ -750,7 +803,12 @@ private:
               ));
             }
             edge.path.push_back(graph_nodes[edge.to_node].position);
-            edge.path = smoothPath(edge.path);
+
+            // smooth the edge path multiple times
+            for (int pass = 0; pass < SMOOTHING_PASSES; ++pass)
+            {
+              edge.path = smoothPath(edge.path);
+            }
 
             for (std::size_t i = 1; i < edge.path.size(); ++i)
             {
@@ -972,13 +1030,19 @@ private:
   // consts
   const unsigned LOOP_DT_MS = 100;
   const double   D = 0.1;
+  const double   DESIRED_PATH_SPEED = 0.7;
+  const double   LOOKAHEAD_DISTANCE = 0.2;
+  const double   GOAL_TOLERANCE = 0.1;
+  const double   MAX_SPEED = 1.0;
+  const double   CONTROL_GAIN = 2.0;
   const int      BORDER_SOURCE_COUNT = 4;
   const int      BORDER_WIDTH_CELLS = 5;
   const int      MIN_GVD_DISTANCE = 10;
   const int      GRAPH_NODE_SCAN_SIDE = 7;
   const int      MIN_GRAPH_NODE_CLUSTER_CELLS = 3;
-  const double   SMOOTHING_CENTER_WEIGHT = 0.3;
-  const double   SMOOTHING_NEIGHBOUR_WEIGHT = 0.35;
+  const int      SMOOTHING_PASSES = 3;
+  const double   SMOOTHING_CENTER_WEIGHT = 0.2;
+  const double   SMOOTHING_NEIGHBOUR_WEIGHT = 0.4;
 
   // labels
   const uint8_t  FREE_CELL = 0;
