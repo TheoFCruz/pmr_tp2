@@ -162,6 +162,15 @@ private:
   {
     RCLCPP_INFO(this->get_logger(), "Received goal: (%.2lf, %.2lf)", msg->x, msg->y);
 
+    if (!isGoalValid(*msg))
+    {
+      RCLCPP_WARN(this->get_logger(), "Rejecting invalid goal.");
+      followed_path.clear();
+      has_path = false;
+      waypoint_i = 0;
+      return;
+    }
+
     goal = Eigen::Vector2d(msg->x, msg->y);
     visualizer.publishPoint("goal_marker", goal, "map", 0, 0.5, 0.0, 0.5);
     received_goal = true;
@@ -947,6 +956,20 @@ private:
     return nearest_node;
   }
 
+  bool isGoalValid(const geometry_msgs::msg::Point &msg)
+  {
+    if (!has_map || map_resolution <= 0.0) return false;
+
+    const int x = static_cast<int>(std::floor((msg.x - map_origin_x) / map_resolution));
+    const int y = static_cast<int>(std::floor((msg.y - map_origin_y) / map_resolution));
+
+    if (x < 0 || x >= map_width) return false;
+    if (y < 0 || y >= map_height) return false;
+
+    const int index = y * map_width + x;
+    return occupancy_grid[index] == FREE_CELL;
+  }
+
   std::vector<Eigen::Vector2d> smoothPath(const std::vector<Eigen::Vector2d> &path)
   {
     if (path.size() <= 2) return path;
@@ -1032,7 +1055,7 @@ private:
   const double   D = 0.1;
   const double   DESIRED_PATH_SPEED = 0.7;
   const double   LOOKAHEAD_DISTANCE = 0.2;
-  const double   GOAL_TOLERANCE = 0.1;
+  const double   GOAL_TOLERANCE = 0.2;
   const double   MAX_SPEED = 1.0;
   const double   CONTROL_GAIN = 2.0;
   const int      BORDER_SOURCE_COUNT = 4;
