@@ -10,10 +10,13 @@
 #include <eigen3/Eigen/Dense>
 
 #include <chrono>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -52,6 +55,14 @@ public:
   }
 
 private:
+  struct RRTNode
+  {
+    Eigen::Vector2d position;
+    int parent = -1;
+  };
+
+  using RRTTree = std::vector<RRTNode>;
+
   // ---------------------- Callbacks -------------------------
 
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
@@ -141,8 +152,6 @@ private:
       RCLCPP_WARN(this->get_logger(), "Cannot run RRT: robot pose has not been received yet.");
       return;
     }
-
-    RCLCPP_INFO(this->get_logger(), "RRT planning placeholder: tree/path generation not implemented yet.");
   }
 
   // --------------------- Control Loop -----------------------
@@ -153,7 +162,140 @@ private:
     if (!has_odom) return;
     if (!received_goal) return;
 
+    if (!has_path)
+    {
+      path = runRRT(robot_pos, goal);
+      has_path = !path.empty();
+      waypoint_i = 0;
+      if (has_path) visualizer.publishPath(path, map_frame_id);
+    }
+
     sendVelocity(Eigen::Vector2d::Zero());
+  }
+
+  std::vector<Eigen::Vector2d> runRRT(
+    const Eigen::Vector2d &start,
+    const Eigen::Vector2d &end)
+  {
+    RRTTree start_tree = initializeTree(start);
+    RRTTree goal_tree = initializeTree(end);
+
+    for (int iteration = 0; iteration < MAX_RRT_ITERATIONS; ++iteration)
+    {
+      const Eigen::Vector2d random_sample = sampleRandomPoint();
+      const int new_node_index = extendTree(start_tree, random_sample);
+      if (new_node_index >= 0 && tryConnectTrees(start_tree, goal_tree, new_node_index))
+      {
+        return buildPathFromTrees(start_tree, goal_tree);
+      }
+
+      std::swap(start_tree, goal_tree);
+    }
+
+    RCLCPP_INFO(this->get_logger(), "RRT planning placeholder: tree/path generation not implemented yet.");
+    return {};
+  }
+
+  RRTTree initializeTree(const Eigen::Vector2d &root) const
+  {
+    return RRTTree{{root, -1}};
+  }
+
+  Eigen::Vector2d sampleRandomPoint() const
+  {
+    if (!has_map || map_resolution <= 0.0)
+    {
+      return Eigen::Vector2d::Zero();
+    }
+
+    std::uniform_real_distribution<double> sample_x(
+      map_origin_x,
+      map_origin_x + map_width * map_resolution
+    );
+    std::uniform_real_distribution<double> sample_y(
+      map_origin_y,
+      map_origin_y + map_height * map_resolution
+    );
+
+    return Eigen::Vector2d(sample_x(rng), sample_y(rng));
+  }
+
+  int nearestNodeIndex(const RRTTree &tree, const Eigen::Vector2d &point) const
+  {
+    int nearest_index = -1;
+    double nearest_distance = std::numeric_limits<double>::infinity();
+
+    for (int i = 0; i < static_cast<int>(tree.size()); ++i)
+    {
+      const double distance = (tree[i].position - point).squaredNorm();
+      if (distance < nearest_distance)
+      {
+        nearest_distance = distance;
+        nearest_index = i;
+      }
+    }
+
+    return nearest_index;
+  }
+
+  Eigen::Vector2d steerToward(
+    const Eigen::Vector2d &from,
+    const Eigen::Vector2d &to) const
+  {
+    const Eigen::Vector2d direction = to - from;
+    const double distance = direction.norm();
+    if (distance <= STEP_SIZE) return to;
+    if (distance <= 0.0) return from;
+
+    return from + direction / distance * STEP_SIZE;
+  }
+
+  int extendTree(
+    RRTTree &tree,
+    const Eigen::Vector2d &target)
+  {
+    const int nearest_index = nearestNodeIndex(tree, target);
+    if (nearest_index < 0) return -1;
+
+    const Eigen::Vector2d new_point = steerToward(tree[nearest_index].position, target);
+    if (!isPointValid(new_point)) return -1;
+
+    tree.push_back({new_point, nearest_index});
+    return static_cast<int>(tree.size()) - 1;
+  }
+
+  bool tryConnectTrees(
+    const RRTTree &tree_a,
+    const RRTTree &tree_b,
+    int new_node_index)
+  {
+    if (new_node_index < 0 || new_node_index >= static_cast<int>(tree_a.size()))
+    {
+      return false;
+    }
+
+    const int nearest_other_index = nearestNodeIndex(tree_b, tree_a[new_node_index].position);
+    if (nearest_other_index < 0) return false;
+
+    const double connection_distance =
+      (tree_a[new_node_index].position - tree_b[nearest_other_index].position).norm();
+
+    return connection_distance <= CONNECT_DISTANCE;
+  }
+
+  std::vector<Eigen::Vector2d> buildPathFromTrees(
+    const RRTTree &start_tree,
+    const RRTTree &goal_tree) const
+  {
+    (void)start_tree;
+    (void)goal_tree;
+    return {};
+  }
+
+  bool isPointValid(const Eigen::Vector2d &point) const
+  {
+    (void)point;
+    return true;
   }
 
   // ------------------ Utility Functions ---------------------
@@ -204,9 +346,14 @@ private:
 
   const unsigned LOOP_DT_MS = 100;
   const double D = 0.1;
+  const int MAX_RRT_ITERATIONS = 1000;
+  const double STEP_SIZE = 0.3;
+  const double CONNECT_DISTANCE = 0.4;
 
   const uint8_t FREE_CELL = 0;
   const uint8_t BLOCKED_CELL = 1;
+
+  mutable std::mt19937 rng{std::random_device{}()};
 };
 
 int main(int argc, char ** argv)
