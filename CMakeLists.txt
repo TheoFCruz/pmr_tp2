@@ -40,10 +40,22 @@ ament_target_dependencies(gvd
   Eigen3
 )
 
+add_executable(rrt
+  src/rrt.cpp
+)
+ament_target_dependencies(rrt
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  visualization_msgs
+  Eigen3
+)
+
 # Install
 install(TARGETS 
   astar
   gvd
+  rrt
   DESTINATION lib/${PROJECT_NAME}
 )
 
