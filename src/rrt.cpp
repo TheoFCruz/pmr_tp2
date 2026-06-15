@@ -113,11 +113,13 @@ private:
     map_origin_y = msg->info.origin.position.y;
     map_frame_id = msg->header.frame_id;
 
-    occupancy_grid.resize(expected_size);
+    std::vector<uint8_t> raw_occupancy_grid(expected_size);
     for (std::size_t i = 0; i < expected_size; ++i)
     {
-      occupancy_grid[i] = (msg->data[i] == 0) ? FREE_CELL : BLOCKED_CELL;
+      raw_occupancy_grid[i] = (msg->data[i] == 0) ? FREE_CELL : BLOCKED_CELL;
     }
+
+    occupancy_grid = inflateMap(raw_occupancy_grid);
 
     has_map = true;
 
@@ -135,8 +137,6 @@ private:
     RCLCPP_INFO(this->get_logger(), "Received goal: (%.2lf, %.2lf)", msg->x, msg->y);
 
     goal = Eigen::Vector2d(msg->x, msg->y);
-    visualizer.publishPoint("goal_marker", goal, "map", 0, 0.0, 1.0, 0.0);
-    received_goal = true;
 
     has_path = false;
     waypoint_i = 0;
@@ -146,6 +146,21 @@ private:
       RCLCPP_WARN(this->get_logger(), "Cannot run RRT: map has not been loaded yet.");
       return;
     }
+
+    if (!isPointInFreeCell(goal))
+    {
+      RCLCPP_WARN(
+        this->get_logger(),
+        "Ignoring goal: (%.2lf, %.2lf) is blocked or outside the inflated map.",
+        goal.x(),
+        goal.y()
+      );
+      received_goal = false;
+      return;
+    }
+
+    visualizer.publishPoint("goal_marker", goal, "map", 0, 0.0, 1.0, 0.0);
+    received_goal = true;
 
     if (!has_odom)
     {
@@ -172,6 +187,8 @@ private:
 
     sendVelocity(Eigen::Vector2d::Zero());
   }
+
+  // --------------------- RRT Core -----------------------
 
   std::vector<Eigen::Vector2d> runRRT(
     const Eigen::Vector2d &start,
@@ -228,7 +245,6 @@ private:
       active_tree_is_start_tree = !active_tree_is_start_tree;
     }
 
-    RCLCPP_INFO(this->get_logger(), "RRT planning placeholder: tree/path generation not implemented yet.");
     return {};
   }
 
@@ -244,14 +260,19 @@ private:
       return Eigen::Vector2d::Zero();
     }
 
-    // uniform sampling
+    // uniform sampling in a box scaled around the map center
+    const double map_size_x = map_width * map_resolution;
+    const double map_size_y = map_height * map_resolution;
+    const double sample_margin_x = (SAMPLE_AREA_SCALE - 1.0) * map_size_x / 2.0;
+    const double sample_margin_y = (SAMPLE_AREA_SCALE - 1.0) * map_size_y / 2.0;
+
     std::uniform_real_distribution<double> sample_x(
-      map_origin_x,
-      map_origin_x + map_width * map_resolution
+      map_origin_x - sample_margin_x,
+      map_origin_x + map_size_x + sample_margin_x
     );
     std::uniform_real_distribution<double> sample_y(
-      map_origin_y,
-      map_origin_y + map_height * map_resolution
+      map_origin_y - sample_margin_y,
+      map_origin_y + map_size_y + sample_margin_y
     );
 
     return Eigen::Vector2d(sample_x(rng), sample_y(rng));
@@ -298,8 +319,9 @@ private:
     if (nearest_index < 0) return -1;
 
     // steer toward sample
-    const Eigen::Vector2d new_point = steerToward(tree[nearest_index].position, target);
-    if (!isPointValid(new_point)) return -1;
+    const Eigen::Vector2d nearest_point = tree[nearest_index].position;
+    const Eigen::Vector2d new_point = steerToward(nearest_point, target);
+    if (!isSegmentValid(nearest_point, new_point)) return -1;
 
     // add valid node
     tree.push_back({new_point, nearest_index});
@@ -326,6 +348,11 @@ private:
       (tree_a[new_node_index].position - tree_b[nearest_other_index].position).norm();
 
     if (connection_distance > CONNECT_DISTANCE)
+    {
+      return -1;
+    }
+
+    if (!isSegmentValid(tree_a[new_node_index].position, tree_b[nearest_other_index].position))
     {
       return -1;
     }
@@ -392,10 +419,48 @@ private:
     return start_path;
   }
 
-  bool isPointValid(const Eigen::Vector2d &point) const
+  bool isSegmentValid(
+    const Eigen::Vector2d &start,
+    const Eigen::Vector2d &end) const
   {
-    (void)point;
+    // reject segments when map data is not ready
+    if (!has_map || map_resolution <= 0.0 || occupancy_grid.empty()) return false;
+
+    // compute how many points are needed to sample the segment
+    const Eigen::Vector2d direction = end - start;
+    const double distance = direction.norm();
+    const int samples = std::max(1, static_cast<int>(std::ceil(distance / COLLISION_CHECK_STEP)));
+
+    // interpolate along the segment and check each sampled point
+    for (int i = 0; i <= samples; ++i)
+    {
+      const double t = static_cast<double>(i) / samples;
+      const Eigen::Vector2d point = start + t * direction;
+
+      if (!isPointInFreeCell(point)) return false;
+    }
+
     return true;
+  }
+
+  bool isPointInFreeCell(const Eigen::Vector2d &point) const
+  {
+    // reject points when map data is not ready
+    if (!has_map || map_resolution <= 0.0 || occupancy_grid.empty()) return false;
+
+    // convert world coordinates to grid coordinates
+    const int cell_x = static_cast<int>(std::floor((point.x() - map_origin_x) / map_resolution));
+    const int cell_y = static_cast<int>(std::floor((point.y() - map_origin_y) / map_resolution));
+
+    // reject points outside the known map bounds
+    if (cell_x < 0 || cell_x >= map_width || cell_y < 0 || cell_y >= map_height)
+    {
+      return false;
+    }
+
+    // accept only cells that are free in the inflated map
+    const std::size_t cell_index = static_cast<std::size_t>(cell_y) * map_width + cell_x;
+    return occupancy_grid[cell_index] == FREE_CELL;
   }
 
   // ------------------ Utility Functions ---------------------
@@ -413,6 +478,51 @@ private:
     vel_twist.angular.z = w;
 
     cmd_vel_pub->publish(vel_twist);
+  }
+
+  std::vector<uint8_t> inflateMap(const std::vector<uint8_t> &raw_grid) const
+  {
+    // start from the original occupancy grid
+    std::vector<uint8_t> inflated_grid = raw_grid;
+
+    if (map_resolution <= 0.0) return inflated_grid;
+
+    // convert the robot radius from meters to grid cells
+    const int inflation_cells = static_cast<int>(std::ceil(ROBOT_RADIUS / map_resolution));
+    const int inflation_cells_squared = inflation_cells * inflation_cells;
+
+    // visit each cell looking for obstacles to inflate
+    for (int y = 0; y < map_height; ++y)
+    {
+      for (int x = 0; x < map_width; ++x)
+      {
+        const std::size_t cell_index = static_cast<std::size_t>(y) * map_width + x;
+        if (raw_grid[cell_index] == FREE_CELL) continue;
+
+        // mark neighboring cells inside the circular inflation radius
+        for (int dy = -inflation_cells; dy <= inflation_cells; ++dy)
+        {
+          for (int dx = -inflation_cells; dx <= inflation_cells; ++dx)
+          {
+            if (dx * dx + dy * dy > inflation_cells_squared) continue;
+
+            // skip inflated cells that would fall outside the map
+            const int inflated_x = x + dx;
+            const int inflated_y = y + dy;
+            if (inflated_x < 0 || inflated_x >= map_width || inflated_y < 0 || inflated_y >= map_height)
+            {
+              continue;
+            }
+
+            const std::size_t inflated_index =
+              static_cast<std::size_t>(inflated_y) * map_width + inflated_x;
+            inflated_grid[inflated_index] = BLOCKED_CELL;
+          }
+        }
+      }
+    }
+
+    return inflated_grid;
   }
 
   // --------------------- Variables --------------------------
@@ -448,8 +558,11 @@ private:
   const double D = 0.1;
   const int MAX_RRT_ITERATIONS = 1000;
   const double STEP_SIZE = 0.1;
-  const double CONNECT_DISTANCE = 0.4;
-  const double GOAL_SAMPLE_PROBABILITY = 0.01;
+  const double CONNECT_DISTANCE = 0.5;
+  const double GOAL_SAMPLE_PROBABILITY = 0.1;
+  const double COLLISION_CHECK_STEP = 0.02;
+  const double ROBOT_RADIUS = 0.20;
+  const double SAMPLE_AREA_SCALE = 2.0;
 
   const uint8_t FREE_CELL = 0;
   const uint8_t BLOCKED_CELL = 1;

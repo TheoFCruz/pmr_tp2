@@ -26,7 +26,7 @@ def generate_launch_description():
 
     declare_map_name = DeclareLaunchArgument(
         'map_name',
-        default_value='gvd_map.yaml',
+        default_value='rrt_map.yaml',
         description='Map YAML file name'
     )
 
