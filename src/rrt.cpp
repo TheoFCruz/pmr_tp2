@@ -179,10 +179,12 @@ private:
   {
     RRTTree start_tree = initializeTree(start);
     RRTTree goal_tree = initializeTree(end);
+    bool active_tree_is_start_tree = true;
 
     for (int iteration = 0; iteration < MAX_RRT_ITERATIONS; ++iteration)
     {
-      const Eigen::Vector2d random_sample = sampleRandomPoint();
+      const Eigen::Vector2d tree_target = active_tree_is_start_tree ? end : start;
+      const Eigen::Vector2d random_sample = sampleRandomPoint(tree_target);
       const int new_node_index = extendTree(start_tree, random_sample);
       if (new_node_index >= 0 && tryConnectTrees(start_tree, goal_tree, new_node_index))
       {
@@ -190,6 +192,7 @@ private:
       }
 
       std::swap(start_tree, goal_tree);
+      active_tree_is_start_tree = !active_tree_is_start_tree;
     }
 
     RCLCPP_INFO(this->get_logger(), "RRT planning placeholder: tree/path generation not implemented yet.");
@@ -201,13 +204,19 @@ private:
     return RRTTree{{root, -1}};
   }
 
-  Eigen::Vector2d sampleRandomPoint() const
+  Eigen::Vector2d sampleRandomPoint(const Eigen::Vector2d &tree_target) const
   {
+    // bias to sample the tree target
+    std::uniform_real_distribution<double> target_probability(0.0, 1.0);
+    if (target_probability(rng) < GOAL_SAMPLE_PROBABILITY) return tree_target;
+
+    // map guard
     if (!has_map || map_resolution <= 0.0)
     {
       return Eigen::Vector2d::Zero();
     }
 
+    // uniform sampling
     std::uniform_real_distribution<double> sample_x(
       map_origin_x,
       map_origin_x + map_width * map_resolution
@@ -349,6 +358,7 @@ private:
   const int MAX_RRT_ITERATIONS = 1000;
   const double STEP_SIZE = 0.3;
   const double CONNECT_DISTANCE = 0.4;
+  const double GOAL_SAMPLE_PROBABILITY = 0.1;
 
   const uint8_t FREE_CELL = 0;
   const uint8_t BLOCKED_CELL = 1;
