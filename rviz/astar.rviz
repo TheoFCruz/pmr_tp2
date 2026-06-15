@@ -8,6 +8,7 @@ Panels:
         - /Status1
         - /Grid1
         - /Map1/Topic1
+        - /Path1
         - /Marker1/Topic1
       Splitter Ratio: 0.5
     Tree Height: 707
@@ -229,14 +230,14 @@ Visualization Manager:
       Enabled: true
       Name: Path
       Namespaces:
-        path: true
+        astar_path: true
       Topic:
         Depth: 5
         Durability Policy: Transient Local
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /a_star/path_marker
+        Value: /astar_path
       Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true

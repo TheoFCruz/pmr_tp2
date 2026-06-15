@@ -209,7 +209,7 @@ private:
     has_path = true;
     waypoint_i = 0;
 
-    visualizer.publishPath(followed_path, map_frame_id);
+    visualizer.publishLineStrip("gvd_path", followed_path, map_frame_id);
   }
 
   // --------------------- Control Loop -----------------------
@@ -500,7 +500,7 @@ private:
     }
 
     // publish all graph edges as disconnected line segments
-    visualizer.publishPaths(
+    visualizer.publishLineList(
       "graph_edges",
       edge_paths,
       map_frame_id,

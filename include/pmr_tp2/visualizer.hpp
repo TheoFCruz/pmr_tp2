@@ -20,11 +20,6 @@ public:
   explicit Visualizer(rclcpp::Node *node)
   : node(node)
   {
-    std::string topic = std::string(node->get_name()) + "/path_marker";
-    path_publisher = node->create_publisher<Marker>(
-      topic,
-      rclcpp::QoS(1).transient_local().reliable()
-    );
   }
 
   void publishPoint(
@@ -68,9 +63,9 @@ public:
     const std::vector<Eigen::Vector2d> &points,
     const std::string &frame_id = "map",
     int id = 0,
-    double r = 1.0,
-    double g = 0.0,
-    double b = 0.0,
+    double r = 0.7,
+    double g = 0.7,
+    double b = 0.7,
     double z = 0.12)
   {
     auto publisher = getMarkerPublisher(topic);
@@ -103,25 +98,27 @@ public:
     publisher->publish(marker);
   }
 
-  void publishPath(
+  void publishLineStrip(
+    const std::string &topic,
     const std::vector<Eigen::Vector2d> &points,
     const std::string &frame_id = "map",
-    double r = 1.0,
-    double g = 0.0,
-    double b = 0.0
+    double r = 0.8,
+    double g = 0.65,
+    double b = 1.0,
+    double width = 0.1
   )
   {
-    if (!path_publisher) return;
+    auto publisher = getMarkerPublisher(topic);
 
     Marker marker;
     marker.header.frame_id = frame_id;
     marker.header.stamp = node->now();
-    marker.ns = "path";
+    marker.ns = topic;
     marker.id = 0;
     marker.type = Marker::LINE_STRIP;
     marker.action = Marker::ADD;
     marker.pose.orientation.w = 1.0;
-    marker.scale.x = 0.1;
+    marker.scale.x = width;
     marker.color.r = r;
     marker.color.g = g;
     marker.color.b = b;
@@ -136,10 +133,10 @@ public:
       marker.points.push_back(marker_point);
     }
 
-    path_publisher->publish(marker);
+    publisher->publish(marker);
   }
 
-  void publishPaths(
+  void publishLineList(
     const std::string &topic,
     const std::vector<std::vector<Eigen::Vector2d>> &paths,
     const std::string &frame_id = "map",
@@ -256,5 +253,4 @@ private:
 
   // map topic to publisher
   std::map<std::string, rclcpp::Publisher<Marker>::SharedPtr> marker_publishers;
-  rclcpp::Publisher<Marker>::SharedPtr path_publisher;
 };

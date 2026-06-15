@@ -167,7 +167,7 @@ private:
       path = runRRT(robot_pos, goal);
       has_path = !path.empty();
       waypoint_i = 0;
-      if (has_path) visualizer.publishPath(path, map_frame_id);
+      if (has_path) visualizer.publishLineStrip("rrt_path", path, map_frame_id);
     }
 
     sendVelocity(Eigen::Vector2d::Zero());
@@ -177,31 +177,59 @@ private:
     const Eigen::Vector2d &start,
     const Eigen::Vector2d &end)
   {
-    RRTTree start_tree = initializeTree(start);
-    RRTTree goal_tree = initializeTree(end);
+    // initialize both trees
+    RRTTree start_tree{{start, -1}};
+    RRTTree goal_tree{{end, -1}};
     bool active_tree_is_start_tree = true;
 
     for (int iteration = 0; iteration < MAX_RRT_ITERATIONS; ++iteration)
     {
+      // extend the active tree
       const Eigen::Vector2d tree_target = active_tree_is_start_tree ? end : start;
       const Eigen::Vector2d random_sample = sampleRandomPoint(tree_target);
       const int new_node_index = extendTree(start_tree, random_sample);
-      if (new_node_index >= 0 && tryConnectTrees(start_tree, goal_tree, new_node_index))
+
+      // check for tree connection
+      const int connection_index_other_tree =
+        tryConnectTrees(start_tree, goal_tree, new_node_index);
+
+      if (connection_index_other_tree >= 0)
       {
-        return buildPathFromTrees(start_tree, goal_tree);
+        if (active_tree_is_start_tree)
+        {
+          // publish the logical start tree in blue
+          publishTree("rrt_start_tree", start_tree, 0.0, 0.4, 1.0);
+
+          // publish the logical goal tree in green
+          publishTree("rrt_goal_tree", goal_tree, 0.0, 1.0, 0.0);
+
+          return buildPathFromTrees(
+            start_tree,
+            new_node_index,
+            goal_tree,
+            connection_index_other_tree);
+        }
+
+        // publish the logical start tree in blue
+        publishTree("rrt_start_tree", goal_tree, 0.0, 0.4, 1.0);
+
+        // publish the logical goal tree in green
+        publishTree("rrt_goal_tree", start_tree, 0.0, 1.0, 0.0);
+
+        return buildPathFromTrees(
+          goal_tree,
+          connection_index_other_tree,
+          start_tree,
+          new_node_index);
       }
 
+      // alternate tree growth
       std::swap(start_tree, goal_tree);
       active_tree_is_start_tree = !active_tree_is_start_tree;
     }
 
     RCLCPP_INFO(this->get_logger(), "RRT planning placeholder: tree/path generation not implemented yet.");
     return {};
-  }
-
-  RRTTree initializeTree(const Eigen::Vector2d &root) const
-  {
-    return RRTTree{{root, -1}};
   }
 
   Eigen::Vector2d sampleRandomPoint(const Eigen::Vector2d &tree_target) const
@@ -234,6 +262,7 @@ private:
     int nearest_index = -1;
     double nearest_distance = std::numeric_limits<double>::infinity();
 
+    // brute-force nearest search
     for (int i = 0; i < static_cast<int>(tree.size()); ++i)
     {
       const double distance = (tree[i].position - point).squaredNorm();
@@ -251,6 +280,7 @@ private:
     const Eigen::Vector2d &from,
     const Eigen::Vector2d &to) const
   {
+    // compute capped step toward target
     const Eigen::Vector2d direction = to - from;
     const double distance = direction.norm();
     if (distance <= STEP_SIZE) return to;
@@ -263,42 +293,103 @@ private:
     RRTTree &tree,
     const Eigen::Vector2d &target)
   {
+    // find nearest node
     const int nearest_index = nearestNodeIndex(tree, target);
     if (nearest_index < 0) return -1;
 
+    // steer toward sample
     const Eigen::Vector2d new_point = steerToward(tree[nearest_index].position, target);
     if (!isPointValid(new_point)) return -1;
 
+    // add valid node
     tree.push_back({new_point, nearest_index});
     return static_cast<int>(tree.size()) - 1;
   }
 
-  bool tryConnectTrees(
+  int tryConnectTrees(
     const RRTTree &tree_a,
     const RRTTree &tree_b,
-    int new_node_index)
+    int new_node_index) const
   {
+    // validate new node index
     if (new_node_index < 0 || new_node_index >= static_cast<int>(tree_a.size()))
     {
-      return false;
+      return -1;
     }
 
+    // find nearest node in other tree
     const int nearest_other_index = nearestNodeIndex(tree_b, tree_a[new_node_index].position);
-    if (nearest_other_index < 0) return false;
+    if (nearest_other_index < 0) return -1;
 
+    // check connection distance
     const double connection_distance =
       (tree_a[new_node_index].position - tree_b[nearest_other_index].position).norm();
 
-    return connection_distance <= CONNECT_DISTANCE;
+    if (connection_distance > CONNECT_DISTANCE)
+    {
+      return -1;
+    }
+
+    return nearest_other_index;
+  }
+
+  std::vector<std::vector<Eigen::Vector2d>> treeToSegments(const RRTTree &tree) const
+  {
+    std::vector<std::vector<Eigen::Vector2d>> segments;
+
+    // convert each parent-child edge into a line segment
+    for (std::size_t i = 1; i < tree.size(); ++i)
+    {
+      const int parent_index = tree[i].parent;
+      if (parent_index < 0) continue;
+
+      segments.push_back({tree[parent_index].position, tree[i].position});
+    }
+
+    return segments;
+  }
+
+  void publishTree(
+    const std::string &topic,
+    const RRTTree &tree,
+    double r,
+    double g,
+    double b)
+  {
+    visualizer.publishLineList(topic, treeToSegments(tree), map_frame_id, 0, r, g, b, 1.0, 0.02);
   }
 
   std::vector<Eigen::Vector2d> buildPathFromTrees(
     const RRTTree &start_tree,
-    const RRTTree &goal_tree) const
+    int start_tree_connection_index,
+    const RRTTree &goal_tree,
+    int goal_tree_connection_index) const
   {
-    (void)start_tree;
-    (void)goal_tree;
-    return {};
+    std::vector<Eigen::Vector2d> start_path;
+    std::vector<Eigen::Vector2d> goal_path;
+
+    // trace the start tree back to the root
+    int current_index = start_tree_connection_index;
+    while (current_index >= 0)
+    {
+      start_path.push_back(start_tree[current_index].position);
+      current_index = start_tree[current_index].parent;
+    }
+
+    // reverse the start-side path to go from root to connection
+    std::reverse(start_path.begin(), start_path.end());
+
+    // trace the goal tree back to the root
+    current_index = goal_tree_connection_index;
+    while (current_index >= 0)
+    {
+      goal_path.push_back(goal_tree[current_index].position);
+      current_index = goal_tree[current_index].parent;
+    }
+
+    // append the goal-side path to complete the route
+    start_path.insert(start_path.end(), goal_path.begin(), goal_path.end());
+    return start_path;
   }
 
   bool isPointValid(const Eigen::Vector2d &point) const
@@ -356,9 +447,9 @@ private:
   const unsigned LOOP_DT_MS = 100;
   const double D = 0.1;
   const int MAX_RRT_ITERATIONS = 1000;
-  const double STEP_SIZE = 0.3;
+  const double STEP_SIZE = 0.1;
   const double CONNECT_DISTANCE = 0.4;
-  const double GOAL_SAMPLE_PROBABILITY = 0.1;
+  const double GOAL_SAMPLE_PROBABILITY = 0.01;
 
   const uint8_t FREE_CELL = 0;
   const uint8_t BLOCKED_CELL = 1;

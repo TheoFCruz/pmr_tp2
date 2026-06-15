@@ -154,7 +154,7 @@ private:
     has_path = !path.empty();
     waypoint_i = 0;
 
-    if (has_path) visualizer.publishPath(path, map_frame_id);
+    if (has_path) visualizer.publishLineStrip("astar_path", path, map_frame_id);
   }
 
   // --------------------- Control Loop -----------------------
@@ -331,9 +331,9 @@ private:
       map_resolution,
       map_frame_id,
       0,
-      1.0,
-      0.6,
       0.0,
+      0.2,
+      0.8,
       0.35,
       0.03
     );

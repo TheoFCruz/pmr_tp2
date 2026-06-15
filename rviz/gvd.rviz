@@ -11,6 +11,7 @@ Panels:
         - /Marker1/Topic1
         - /Marker2/Topic1
         - /Marker3/Topic1
+        - /Marker4
         - /Marker4/Topic1
         - /Marker5/Topic1
       Splitter Ratio: 0.5
@@ -272,14 +273,14 @@ Visualization Manager:
       Enabled: true
       Name: Marker
       Namespaces:
-        path: true
+        gvd_path: true
       Topic:
         Depth: 5
         Durability Policy: Transient Local
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /gvd/path_marker
+        Value: /gvd_path
       Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true
@@ -349,11 +350,11 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 40.87289047241211
+      Scale: 51.27095413208008
       Target Frame: <Fixed Frame>
       Value: TopDownOrtho (rviz_default_plugins)
-      X: 0.998690128326416
-      Y: -1.2769598960876465
+      X: 1.1937322616577148
+      Y: -1.4524976015090942
     Saved: ~
 Window Geometry:
   Displays:
