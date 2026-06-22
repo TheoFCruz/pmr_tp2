@@ -354,11 +354,16 @@ private:
       return {};
     }
 
-    // Prepare the open queue and closed set.
+    // Prepare the open queue, closed set, and best known distance per cell.
     std::priority_queue< CellEntry, std::vector<CellEntry>, CompareCellEntry> open;
     std::map<int, CellEntry> closed;
+    std::vector<double> best_distance(
+      occupancy_grid.size(),
+      std::numeric_limits<double>::infinity()
+    );
 
     // Seed the search with the start cell.
+    best_distance[start_index] = 0.0;
     open.push({start_index, 0, calculateHeuristic(start_index, end_index), -1});
 
     while (!open.empty())
@@ -385,14 +390,19 @@ private:
       {
         if (closed.find(neighbour_index) != closed.end()) continue;
 
+        const double new_distance = current.distance + 1.0;
+        if (new_distance >= best_distance[neighbour_index]) continue;
+
+        best_distance[neighbour_index] = new_distance;
+
         // Add neighbour to open set
         CellEntry neighbour = {
           neighbour_index,
-          current.distance + 1.0,
+          new_distance,
           calculateHeuristic(neighbour_index, end_index),
           current.index
         };
-        // Duplicates are ok: the first popped entry for an index is the best one.
+
         open.push(neighbour);
       }
     }

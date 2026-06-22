@@ -15,10 +15,10 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <queue>
 #include <string>
-#include <utility>
 #include <vector>
 
 class GVD : public rclcpp::Node
@@ -840,6 +840,62 @@ private:
     );
   }
 
+  struct DijkstraEntry
+  {
+    int node;
+    double distance = -1.0;
+    int came_from_node = -1;
+    int came_from_edge = -1;
+  };
+
+  std::vector<Eigen::Vector2d> buildDijkstraPath(
+    const std::map<int, DijkstraEntry>& closed,
+    int start_node,
+    int goal_node)
+  {
+    std::vector<int> edge_path;
+    int path_node = goal_node;
+
+    while (path_node != NO_GRAPH_NODE)
+    {
+      if (path_node == start_node) break;
+
+      const auto closed_entry = closed.find(path_node);
+      if (closed_entry == closed.end()) return {};
+
+      const DijkstraEntry &entry = closed_entry->second;
+      if (entry.came_from_edge == NO_EDGE) return {};
+
+      edge_path.push_back(entry.came_from_edge);
+      path_node = entry.came_from_node;
+    }
+
+    if (path_node != start_node) return {};
+
+    std::reverse(edge_path.begin(), edge_path.end());
+
+    std::vector<Eigen::Vector2d> path;
+    path_node = start_node;
+
+    for (int edge_id : edge_path)
+    {
+      const GraphEdge &edge = graph_edges[edge_id];
+      const bool forward = edge.from_node == path_node;
+      const std::vector<Eigen::Vector2d> &edge_points = edge.path;
+
+      for (std::size_t i = 0; i < edge_points.size(); ++i)
+      {
+        const std::size_t point_index = forward ? i : edge_points.size() - 1 - i;
+        if (!path.empty() && i == 0) continue;
+        path.push_back(edge_points[point_index]);
+      }
+
+      path_node = forward ? edge.to_node : edge.from_node;
+    }
+
+    return path;
+  }
+
   std::vector<Eigen::Vector2d> runDijkstra(int start_node, int goal_node)
   {
     if (start_node < 0 || start_node >= static_cast<int>(graph_nodes.size()))
@@ -857,82 +913,76 @@ private:
       return {graph_nodes[start_node].position};
     }
 
-    const double infinity = std::numeric_limits<double>::infinity();
-    std::vector<double> best_cost(graph_nodes.size(), infinity);
-    std::vector<int> previous_node(graph_nodes.size(), NO_GRAPH_NODE);
-    std::vector<int> previous_edge(graph_nodes.size(), NO_EDGE);
+    struct CompareDijkstraEntry
+    {
+      bool operator()(const DijkstraEntry &a, const DijkstraEntry &b)
+      {
+        return a.distance > b.distance;
+      }
+    };
 
-    using QueueEntry = std::pair<double, int>;
+    // Prepare the open queue, closed set, and best known distance per node.
     std::priority_queue<
-      QueueEntry,
-      std::vector<QueueEntry>,
-      std::greater<QueueEntry>
+      DijkstraEntry,
+      std::vector<DijkstraEntry>,
+      CompareDijkstraEntry
     > open;
+    std::map<int, DijkstraEntry> closed;
+    std::vector<double> best_distance(
+      graph_nodes.size(),
+      std::numeric_limits<double>::infinity()
+    );
 
-    best_cost[start_node] = 0.0;
-    open.push({0.0, start_node});
+    // Seed the search with the start node.
+    best_distance[start_node] = 0.0;
+    open.push({start_node, 0.0, NO_GRAPH_NODE, NO_EDGE});
 
     while (!open.empty())
     {
-      const double current_cost = open.top().first;
-      const int current_node = open.top().second;
+      // Expand the currently cheapest node.
+      const DijkstraEntry current = open.top();
       open.pop();
 
-      if (current_cost > best_cost[current_node]) continue;
-      if (current_node == goal_node) break;
+      // Skip stale queue entries for nodes already expanded.
+      if (closed.find(current.node) != closed.end()) continue;
 
-      // relax every graph edge connected to the current node
-      for (int edge_id : graph_nodes[current_node].edge_ids)
+      // Add current node to closed.
+      closed[current.node] = current;
+
+      // Stop when the goal is reached and reconstruct the path.
+      if (current.node == goal_node)
+      {
+        return buildDijkstraPath(closed, start_node, goal_node);
+      }
+
+      // Relax every graph edge connected to the current node.
+      for (int edge_id : graph_nodes[current.node].edge_ids)
       {
         const GraphEdge &edge = graph_edges[edge_id];
         const int next_node =
-          (edge.from_node == current_node) ? edge.to_node : edge.from_node;
-        const double new_cost = current_cost + edge.cost;
+          (edge.from_node == current.node) ? edge.to_node : edge.from_node;
 
-        if (new_cost >= best_cost[next_node]) continue;
+        if (closed.find(next_node) != closed.end()) continue;
 
-        best_cost[next_node] = new_cost;
-        previous_node[next_node] = current_node;
-        previous_edge[next_node] = edge_id;
-        open.push({new_cost, next_node});
+        const double new_distance = current.distance + edge.cost;
+        if (new_distance >= best_distance[next_node]) continue;
+
+        best_distance[next_node] = new_distance;
+
+        // Add neighbour to open set.
+        DijkstraEntry neighbour = {
+          next_node,
+          new_distance,
+          current.node,
+          edge_id
+        };
+
+        open.push(neighbour);
       }
     }
 
-    if (best_cost[goal_node] == infinity)
-    {
-      RCLCPP_WARN(this->get_logger(), "Dijkstra could not find a graph path.");
-      return {};
-    }
-
-    std::vector<int> edge_path;
-    for (int node = goal_node; node != start_node; node = previous_node[node])
-    {
-      if (node == NO_GRAPH_NODE || previous_edge[node] == NO_EDGE) return {};
-      edge_path.push_back(previous_edge[node]);
-    }
-    std::reverse(edge_path.begin(), edge_path.end());
-
-    std::vector<Eigen::Vector2d> path;
-    int current_node = start_node;
-
-    // concatenate graph edge paths in the direction selected by Dijkstra
-    for (int edge_id : edge_path)
-    {
-      const GraphEdge &edge = graph_edges[edge_id];
-      const bool forward = edge.from_node == current_node;
-      const std::vector<Eigen::Vector2d> &edge_points = edge.path;
-
-      for (std::size_t i = 0; i < edge_points.size(); ++i)
-      {
-        const std::size_t point_index = forward ? i : edge_points.size() - 1 - i;
-        if (!path.empty() && i == 0) continue;
-        path.push_back(edge_points[point_index]);
-      }
-
-      current_node = forward ? edge.to_node : edge.from_node;
-    }
-
-    return path;
+    RCLCPP_WARN(this->get_logger(), "Dijkstra could not find a graph path.");
+    return {};
   }
 
   // ------------------ Utility Functions ---------------------
