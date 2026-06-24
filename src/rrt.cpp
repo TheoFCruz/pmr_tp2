@@ -179,13 +179,72 @@ private:
 
     if (!has_path)
     {
-      path = runRRT(robot_pos, goal);
+      const auto raw_path = runRRT(robot_pos, goal);
+      path = simplifyPath(raw_path);
       has_path = !path.empty();
       waypoint_i = 0;
+      if (!raw_path.empty()) visualizer.publishLineStrip("rrt_raw_path", raw_path, map_frame_id, 1, 0, 0, 0.1);
       if (has_path) visualizer.publishLineStrip("rrt_path", path, map_frame_id);
+
+      sendVelocity(Eigen::Vector2d::Zero());
+      return;
     }
 
-    sendVelocity(Eigen::Vector2d::Zero());
+    if ((robot_pos - goal).norm() <= ERROR_TH)
+    {
+      sendVelocity(Eigen::Vector2d::Zero());
+      received_goal = false;
+      has_path = false; 
+      RCLCPP_INFO(this->get_logger(), "Reached goal. Stopping control");
+      return;
+    }
+
+    Eigen::Vector2d waypoint = path[waypoint_i];
+    Eigen::Vector2d heading = {cos(robot_yaw), sin(robot_yaw)};
+    Eigen::Vector2d x_d = robot_pos + D*heading;
+    Eigen::Vector2d vel = (waypoint - x_d)*KP;
+
+    if (vel.norm() > MAX_SPEED) vel = vel.normalized()*MAX_SPEED;
+    sendVelocity(vel);
+
+    if ((waypoint - robot_pos).norm() <= ERROR_TH)
+    {
+      waypoint_i++;
+    }
+
+  }
+
+  std::vector<Eigen::Vector2d> simplifyPath(
+    const std::vector<Eigen::Vector2d> &raw_path) const
+  {
+    if (raw_path.size() <= 2) return raw_path;
+
+    std::vector<Eigen::Vector2d> simplified_path;
+    simplified_path.push_back(raw_path.front());
+
+    std::size_t current_index = 0;
+
+    while (current_index < raw_path.size() - 1) {
+      std::size_t best_next_index = current_index + 1;
+
+      const std::size_t max_next_index = std::min(
+        raw_path.size() - 1, current_index + MAX_SIMPLIFY_LOOKAHEAD);
+
+      for (std::size_t candidate_index = max_next_index;
+        candidate_index > current_index + 1;
+        --candidate_index)
+      {
+        if (isSegmentValid(raw_path[current_index], raw_path[candidate_index])) {
+          best_next_index = candidate_index;
+          break;
+        }
+      }
+
+      simplified_path.push_back(raw_path[best_next_index]);
+      current_index = best_next_index;
+    }
+
+    return simplified_path;
   }
 
   // --------------------- RRT Core -----------------------
@@ -556,6 +615,9 @@ private:
 
   const unsigned LOOP_DT_MS = 100;
   const double D = 0.1;
+  const double KP = 3.0;
+  const double MAX_SPEED = 1.0;
+  const double ERROR_TH = 0.25;
   const int MAX_RRT_ITERATIONS = 1000;
   const double STEP_SIZE = 0.1;
   const double CONNECT_DISTANCE = 0.5;
@@ -563,6 +625,7 @@ private:
   const double COLLISION_CHECK_STEP = 0.02;
   const double ROBOT_RADIUS = 0.20;
   const double SAMPLE_AREA_SCALE = 2.0;
+  const std::size_t MAX_SIMPLIFY_LOOKAHEAD = 5;
 
   const uint8_t FREE_CELL = 0;
   const uint8_t BLOCKED_CELL = 1;
