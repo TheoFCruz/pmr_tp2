@@ -207,10 +207,7 @@ private:
     if (vel.norm() > MAX_SPEED) vel = vel.normalized()*MAX_SPEED;
     sendVelocity(vel);
 
-    if ((waypoint - robot_pos).norm() <= ERROR_TH)
-    {
-      waypoint_i++;
-    }
+    if ((waypoint - robot_pos).norm() <= ERROR_TH) waypoint_i++;
 
   }
 

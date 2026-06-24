@@ -781,10 +781,8 @@ private:
 
             const int first_node = std::min(node_id, target_node);
             const int second_node = std::max(node_id, target_node);
-            const int edge_key =
-              first_node * static_cast<int>(graph_nodes.size()) + second_node;
-            if (std::find(edge_keys.begin(), edge_keys.end(), edge_key) !=
-                edge_keys.end())
+            const int edge_key = first_node * static_cast<int>(graph_nodes.size()) + second_node;
+            if (std::find(edge_keys.begin(), edge_keys.end(), edge_key) != edge_keys.end())
             {
               continue;
             }
@@ -959,8 +957,7 @@ private:
       for (int edge_id : graph_nodes[current.node].edge_ids)
       {
         const GraphEdge &edge = graph_edges[edge_id];
-        const int next_node =
-          (edge.from_node == current.node) ? edge.to_node : edge.from_node;
+        const int next_node = (edge.from_node == current.node) ? edge.to_node : edge.from_node;
 
         if (closed.find(next_node) != closed.end()) continue;
 
