@@ -102,9 +102,9 @@ public:
     const std::string &topic,
     const std::vector<Eigen::Vector2d> &points,
     const std::string &frame_id = "map",
-    double r = 0.2,
-    double g = 0.65,
-    double b = 1.0,
+    double r = 1.0,
+    double g = 0.0,
+    double b = 0.0,
     double width = 0.1
   )
   {

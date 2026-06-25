@@ -274,7 +274,7 @@ private:
           publishTree("rrt_start_tree", start_tree, 0.0, 0.4, 1.0);
 
           // publish the logical goal tree in green
-          publishTree("rrt_goal_tree", goal_tree, 0.0, 1.0, 0.0);
+          publishTree("rrt_goal_tree", goal_tree, 0.0, 0.8, 0.0);
 
           return buildPathFromTrees(
             start_tree,
@@ -287,7 +287,7 @@ private:
         publishTree("rrt_start_tree", goal_tree, 0.0, 0.4, 1.0);
 
         // publish the logical goal tree in green
-        publishTree("rrt_goal_tree", start_tree, 0.0, 1.0, 0.0);
+        publishTree("rrt_goal_tree", start_tree, 0.0, 0.8, 0.0);
 
         return buildPathFromTrees(
           goal_tree,
@@ -439,7 +439,7 @@ private:
     double g,
     double b)
   {
-    visualizer.publishLineList(topic, treeToSegments(tree), map_frame_id, 0, r, g, b, 1.0, 0.02);
+    visualizer.publishLineList(topic, treeToSegments(tree), map_frame_id, 0, r, g, b, 1.0, 0.05);
   }
 
   std::vector<Eigen::Vector2d> buildPathFromTrees(

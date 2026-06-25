@@ -472,8 +472,8 @@ private:
       map_frame_id,
       0,
       0.0,
-      0.9,
-      0.9
+      0.7,
+      1.0
     );
 
     if (gvd_cells.empty())
@@ -506,7 +506,7 @@ private:
       map_frame_id,
       0,
       0.0,
-      1.0,
+      0.7,
       1.0,
       1.0,
       0.04,
