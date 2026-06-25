@@ -183,8 +183,8 @@ private:
       path = simplifyPath(raw_path);
       has_path = !path.empty();
       waypoint_i = 0;
-      if (!raw_path.empty()) visualizer.publishLineStrip("rrt_raw_path", raw_path, map_frame_id, 1, 0, 0, 0.1);
-      if (has_path) visualizer.publishLineStrip("rrt_path", path, map_frame_id);
+      if (!raw_path.empty()) visualizer.publishLineStrip("rrt_raw_path", raw_path, map_frame_id, 0, 0.5, 0.5, 0.1);
+      if (has_path) visualizer.publishLineStrip("rrt_path", path, map_frame_id, 1, 0, 0, 0.1);
 
       sendVelocity(Eigen::Vector2d::Zero());
       return;
